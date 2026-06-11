@@ -1654,7 +1654,7 @@ impl<'gl_ctx> GLES1Native<'gl_ctx> {
     /// to flag a synthetic `GL_INVALID_OPERATION` and emit a one-shot
     /// warning describing the offending call.
     fn record_es2_unsupported(&self, fn_name: &str) {
-        log!(
+        log_dbg!(
             "{} (OpenGL ES 2.0) called on a native ES 1.1 context; \
              reporting GL_INVALID_OPERATION via glGetError as required by spec.",
             fn_name
