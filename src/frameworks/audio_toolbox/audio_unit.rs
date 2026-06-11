@@ -1061,6 +1061,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
                     fmt.sample_rate as i32,
                 );
                 context.SourceQueueBuffers(al_source, 1, &b);
+                context.Sourcef(al_source, AL_GAIN, 4.0);
                 let mut state = 0;
                 context.GetSourcei(al_source, AL_SOURCE_STATE, &mut state);
                 if state != AL_PLAYING {
@@ -1322,6 +1323,7 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
                 sample_rate as i32,
             );
             context.SourceQueueBuffers(al_source, 1, &b);
+            context.Sourcef(al_source, AL_GAIN, 4.0);
             let mut state = 0;
             context.GetSourcei(al_source, AL_SOURCE_STATE, &mut state);
             if state != AL_PLAYING {
