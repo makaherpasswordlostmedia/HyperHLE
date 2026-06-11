@@ -26,8 +26,24 @@ use crate::frameworks::carbon_core::{paramErr, OSStatus};
 use crate::frameworks::core_audio_types::{fourcc, AudioStreamBasicDescription};
 use crate::frameworks::core_foundation::cf_run_loop::CFRunLoopGetMain;
 use crate::frameworks::foundation::ns_run_loop;
-use crate::mem::{guest_size_of, ConstVoidPtr, MutPtr, MutVoidPtr, SafeRead};
-use crate::objc::nil;
+use crate::mem::{guest_size_of, ConstVoidPtr, MutPtr, MutVoidPtr, SafeRead, SafeWrite};
+
+/// AudioTimeStamp — передаётся в render callback вместо NULL,
+/// чтобы игры (например Undercroft), которые разыменовывают timestamp,
+/// не падали с NULL-PAGE READ.
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
+struct AudioTimeStamp {
+    sample_time: f64,
+    host_time: u64,
+    rate_scalar: f64,
+    word_clock_time: u64,
+    smpte_time: [u8; 32],
+    flags: u32,
+    _reserved: u32,
+}
+unsafe impl SafeRead for AudioTimeStamp {}
+unsafe impl SafeWrite for AudioTimeStamp {}
 
 use super::audio_components::{AURenderCallbackStruct, AudioComponentInstance};
 use super::audio_queue::decode_buffer;
@@ -995,17 +1011,31 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
         let input_proc = callback.input_proc;
         let input_proc_ref = callback.input_proc_ref_con;
 
+        // Передаём валидный AudioTimeStamp вместо NULL — некоторые игры
+        // (Undercroft) разыменовывают этот указатель и падают с NULL-PAGE READ.
+        let timestamp = env.mem.alloc_and_write(AudioTimeStamp {
+            sample_time: fmt.sample_rate * elapsed.as_secs_f64(),
+            host_time: 0u64,
+            rate_scalar: 1.0f64,
+            word_clock_time: 0u64,
+            smpte_time: [0u8; 32],
+            flags: 1u32, // kAudioTimeStampSampleTimeValid
+            _reserved: 0u32,
+        });
+
         let _: OSStatus = input_proc.call_from_host(
             env,
             (
                 input_proc_ref,
                 action_flags,
-                nil.cast_void().cast_const(),
+                timestamp.cast_void().cast_const(),
                 bus_id,
                 frames,
                 abl.cast::<std::ffi::c_void>(),
             ),
         );
+
+        env.mem.free(timestamp.cast_void());
 
         let (al_fmt, _, processed) = decode_buffer(&env.mem, &fmt, buffer_data.cast(), buffer_size);
 
@@ -1242,17 +1272,31 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
     let input_proc = callback.input_proc;
     let input_proc_ref = callback.input_proc_ref_con;
 
+    // Передаём валидный AudioTimeStamp вместо NULL.
+    let elapsed = Instant::now().duration_since(last_render_time);
+    let timestamp = env.mem.alloc_and_write(AudioTimeStamp {
+        sample_time: sample_rate * elapsed.as_secs_f64(),
+        host_time: 0u64,
+        rate_scalar: 1.0f64,
+        word_clock_time: 0u64,
+        smpte_time: [0u8; 32],
+        flags: 1u32, // kAudioTimeStampSampleTimeValid
+        _reserved: 0u32,
+    });
+
     let _: OSStatus = input_proc.call_from_host(
         env,
         (
             input_proc_ref,
             action_flags,
-            nil.cast_void().cast_const(),
+            timestamp.cast_void().cast_const(),
             0u32,
             frames,
             audio_buffer_list,
         ),
     );
+
+    env.mem.free(timestamp.cast_void());
 
     let (al_fmt, _, processed) =
         decode_buffer(&env.mem, &stream_format, buffer1_data.cast(), buffer_size);
