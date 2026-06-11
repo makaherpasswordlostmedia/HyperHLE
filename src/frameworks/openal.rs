@@ -390,10 +390,13 @@ fn alcCreateContext(
     State::get(env).contexts.insert(guest_res, ctx);
 
     // Устанавливаем глобальную громкость listener'а (множитель для всех источников)
-    if let Some(ctx) = State::get(env).contexts.get_mut(&guest_res) {
-        let context = ctx.make_current(&mut env.openal_manager);
-        unsafe {
-            context.Listenerf(0x100A /* AL_GAIN */, 4.0);
+    {
+        let state = &mut env.framework_state.openal;
+        if let Some(ctx) = state.contexts.get_mut(&guest_res) {
+            let context = ctx.make_current(&mut env.openal_manager);
+            unsafe {
+                context.Listenerf(0x100A /* AL_GAIN */, 4.0);
+            }
         }
     }
 
