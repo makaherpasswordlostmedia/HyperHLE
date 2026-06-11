@@ -16,8 +16,8 @@ use crate::environment::Environment;
 use crate::export_c_func;
 use crate::frameworks::carbon_core::{paramErr, OSStatus};
 use crate::frameworks::core_audio_types::{
-    fourcc, kAudioFormatFlagIsAlignedHigh, kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked,
-    kAudioFormatFlagIsSignedInteger, kAudioFormatLinearPCM, AudioStreamBasicDescription,
+    fourcc, kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked,
+    kAudioFormatLinearPCM, AudioStreamBasicDescription,
 };
 use crate::mem::{ConstPtr, ConstVoidPtr, MutPtr, SafeRead};
 
@@ -107,9 +107,7 @@ impl Default for AudioComponentInstanceHostObject {
                 sample_rate: 44100.0,
                 format_id: kAudioFormatLinearPCM,
                 format_flags: kAudioFormatFlagIsFloat
-                    | kAudioFormatFlagIsSignedInteger
-                    | kAudioFormatFlagIsPacked
-                    | kAudioFormatFlagIsAlignedHigh,
+                    | kAudioFormatFlagIsPacked,
                 bytes_per_packet: 4,
                 frames_per_packet: 1,
                 bytes_per_frame: 4,
@@ -177,15 +175,14 @@ fn AudioComponentFindNext(
     let comp_sub_type = audio_comp_descr.component_sub_type;
     let comp_manufacturer = audio_comp_descr.component_manufacturer;
 
-    let manufacturer_ok = |m: u32| m == 0 || m == kAudioUnitManufacturer_Apple;
-
     let is_remote_io = comp_type == kAudioUnitType_Output
         && comp_sub_type == kAudioUnitSubType_RemoteIO
-        && manufacturer_ok(comp_manufacturer);
+        && comp_manufacturer == kAudioUnitManufacturer_Apple;
 
     let is_3d_mixer = comp_type == kAudioUnitType_Mixer
         && comp_sub_type == kAudioUnitSubType_3DMixer
-        && manufacturer_ok(comp_manufacturer);
+        && comp_manufacturer == kAudioUnitManufacturer_Apple;
+
     if !is_remote_io && !is_3d_mixer {
         log!(
             "AudioComponentFindNext: unsupported component type={:#010x} sub_type={:#010x} manufacturer={:#010x}, returning null",
