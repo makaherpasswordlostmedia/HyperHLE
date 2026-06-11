@@ -11,6 +11,7 @@ use std::time::Instant;
 use crate::audio::openal::al_types::{ALuint, ALvoid};
 use crate::audio::openal::{AL_BUFFERS_PROCESSED, AL_PLAYING, AL_SOURCE_STATE};
 
+const AL_GAIN: i32 = 0x100A;
 const AL_POSITION: i32 = 0x1004;
 const AL_REFERENCE_DISTANCE: i32 = 0x1020;
 const AL_ROLLOFF_FACTOR: i32 = 0x1021;
@@ -749,6 +750,7 @@ pub fn setup_audio_unit_for_render(env: &mut Environment, ci: AudioUnit) {
         let mut s: ALuint = 0;
         unsafe {
             context.GenSources(1, &mut s);
+            context.Sourcef(s, AL_GAIN, 4.0);
             context.SourcePlay(s);
         }
         Some(s)
@@ -761,6 +763,7 @@ pub fn setup_audio_unit_for_render(env: &mut Environment, ci: AudioUnit) {
         let mut s: ALuint = 0;
         unsafe {
             context.GenSources(1, &mut s);
+            context.Sourcef(s, AL_GAIN, 4.0);
             context.SourcePlay(s);
         }
         bus_sources.push((*bus_id, s));
