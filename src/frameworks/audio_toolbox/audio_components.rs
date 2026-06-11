@@ -177,11 +177,13 @@ fn AudioComponentFindNext(
 
     let is_remote_io = comp_type == kAudioUnitType_Output
         && comp_sub_type == kAudioUnitSubType_RemoteIO
-        && comp_manufacturer == kAudioUnitManufacturer_Apple;
+        && (comp_manufacturer == kAudioUnitManufacturer_Apple
+            || comp_manufacturer == 0); // 0 = wildcard, matches any manufacturer
 
     let is_3d_mixer = comp_type == kAudioUnitType_Mixer
         && comp_sub_type == kAudioUnitSubType_3DMixer
-        && comp_manufacturer == kAudioUnitManufacturer_Apple;
+        && (comp_manufacturer == kAudioUnitManufacturer_Apple
+            || comp_manufacturer == 0); // 0 = wildcard, matches any manufacturer
 
     if !is_remote_io && !is_3d_mixer {
         log!(
