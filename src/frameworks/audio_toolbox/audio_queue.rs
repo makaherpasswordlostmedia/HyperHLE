@@ -365,7 +365,8 @@ pub fn AudioQueueSetParameter(
                     .make_al_context_current(&mut env.openal_manager);
                 let clamped = in_value.clamp(0.0, 1.0);
                 unsafe {
-                    context.Sourcef(al_source, al::AL_MAX_GAIN, clamped);
+                    context.Sourcef(al_source, al::AL_GAIN, clamped);
+                    context.Sourcef(al_source, al::AL_MAX_GAIN, 1.0);
                 }
             }
             0
@@ -1226,7 +1227,8 @@ fn prime_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
 
         unsafe {
             context.GenSources(1, &mut al_source);
-            context.Sourcef(al_source, al::AL_MAX_GAIN, volume);
+            context.Sourcef(al_source, al::AL_GAIN, volume);
+            context.Sourcef(al_source, al::AL_MAX_GAIN, 1.0);
             assert!(context.GetError() == 0);
         };
         apply_al_pan(&context, al_source, pan);
