@@ -177,14 +177,15 @@ fn AudioComponentFindNext(
     let comp_sub_type = audio_comp_descr.component_sub_type;
     let comp_manufacturer = audio_comp_descr.component_manufacturer;
 
+    let manufacturer_ok = |m: u32| m == 0 || m == kAudioUnitManufacturer_Apple;
+
     let is_remote_io = comp_type == kAudioUnitType_Output
         && comp_sub_type == kAudioUnitSubType_RemoteIO
-        && comp_manufacturer == kAudioUnitManufacturer_Apple;
+        && manufacturer_ok(comp_manufacturer);
 
     let is_3d_mixer = comp_type == kAudioUnitType_Mixer
         && comp_sub_type == kAudioUnitSubType_3DMixer
-        && comp_manufacturer == kAudioUnitManufacturer_Apple;
-
+        && manufacturer_ok(comp_manufacturer);
     if !is_remote_io && !is_3d_mixer {
         log!(
             "AudioComponentFindNext: unsupported component type={:#010x} sub_type={:#010x} manufacturer={:#010x}, returning null",
