@@ -26,7 +26,7 @@ use crate::frameworks::carbon_core::{paramErr, OSStatus};
 use crate::frameworks::core_audio_types::{fourcc, AudioStreamBasicDescription};
 use crate::frameworks::core_foundation::cf_run_loop::CFRunLoopGetMain;
 use crate::frameworks::foundation::ns_run_loop;
-use crate::mem::{guest_size_of, ConstVoidPtr, MutPtr, MutVoidPtr, SafeRead, SafeWrite};
+use crate::mem::{guest_size_of, ConstVoidPtr, MutPtr, MutVoidPtr, SafeRead};
 
 /// AudioTimeStamp — передаётся в render callback вместо NULL,
 /// чтобы игры (например Undercroft), которые разыменовывают timestamp,
@@ -43,7 +43,6 @@ struct AudioTimeStamp {
     _reserved: u32,
 }
 unsafe impl SafeRead for AudioTimeStamp {}
-unsafe impl SafeWrite for AudioTimeStamp {}
 
 use super::audio_components::{AURenderCallbackStruct, AudioComponentInstance};
 use super::audio_queue::decode_buffer;
