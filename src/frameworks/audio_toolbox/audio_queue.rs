@@ -365,10 +365,10 @@ pub fn AudioQueueSetParameter(
                     .framework_state
                     .audio_toolbox
                     .make_al_context_current(&mut env.openal_manager);
-                let clamped = in_value.clamp(0.0, 1.0);
+                let clamped = in_value.clamp(0.0, 1.0) * 4.0;
                 unsafe {
                     context.Sourcef(al_source, AL_GAIN, clamped);
-                    context.Sourcef(al_source, al::AL_MAX_GAIN, 1.0);
+                    context.Sourcef(al_source, al::AL_MAX_GAIN, 4.0);
                 }
             }
             0
@@ -1223,14 +1223,14 @@ fn prime_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
     }
 
     if host_object.al_source.is_none() {
-        let volume = host_object.volume.clamp(0.0, 1.0);
+        let volume = host_object.volume.clamp(0.0, 1.0) * 4.0;
         let pan = host_object.pan.clamp(-1.0, 1.0);
         let mut al_source = 0;
 
         unsafe {
             context.GenSources(1, &mut al_source);
             context.Sourcef(al_source, AL_GAIN, volume);
-            context.Sourcef(al_source, al::AL_MAX_GAIN, 1.0);
+            context.Sourcef(al_source, al::AL_MAX_GAIN, 4.0);
             assert!(context.GetError() == 0);
         };
         apply_al_pan(&context, al_source, pan);
