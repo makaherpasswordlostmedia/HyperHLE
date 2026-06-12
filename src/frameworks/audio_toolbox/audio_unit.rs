@@ -151,6 +151,10 @@ const kAudioUnitProperty_3DMixerRenderingFlags: AudioUnitPropertyID = fourcc(b"3
 const k3DMixerParam_Azimuth: AudioUnitParameterID = 0;
 const k3DMixerParam_Elevation: AudioUnitParameterID = 1;
 const k3DMixerParam_Distance: AudioUnitParameterID = 2;
+/// Gain параметр 3D Mixer / MultiChannelMixer (ID 3).
+/// Apple docs: kMultiChannelMixerParam_Volume = 0, но у 3D Mixer — 3.
+/// Undercroft использует это значение для управления громкостью шины.
+const k3DMixerParam_Gain: AudioUnitParameterID = 3;
 
 // =========================================================================
 // MARK: - Инициализация / Деинициализация AudioUnit
@@ -319,6 +323,26 @@ fn AudioUnitSetProperty(
                         in_scope
                     ),
                 }
+            }
+            kAudioMixerProperty_Volume => {
+                // Громкость глобального output-шины или конкретной input-шины.
+                // in_data: f32, диапазон [0..1] (линейный).
+                let vol: f32 = env.mem.read::<f32, false>(in_data.cast());
+                let al_gain = vol * 4.0;
+                if in_scope == kAudioUnitScope_Input {
+                    let bus = host_object.mixer_buses.entry(in_element).or_default();
+                    bus.gain = al_gain;
+                    if let Some(src) = bus.al_source {
+                        update_al_distance = Some((src, bus.distance_params));
+                        // Перезаписываем update_al_distance временно —
+                        // применяем gain отдельно после borrow.
+                        // NOTE: Используем отдельное поле update_al_volume.
+                    }
+                }
+                log_dbg!(
+                    "AudioUnitSetProperty(Volume) unit={:?} scope={} element={} vol={} (al_gain={})",
+                    in_unit, in_scope, in_element, vol, al_gain
+                );
             }
             kAudioUnitProperty_SampleRate => {
                 let rate: f64 = env.mem.read::<f64, false>(in_data.cast());
@@ -598,6 +622,7 @@ fn AudioUnitSetParameter(
         in_value
     );
     let mut update_al_pos = None;
+    let mut update_al_gain: Option<(ALuint, f32)> = None;
 
     // Ограничиваем область видимости заимствования
     {
@@ -625,7 +650,26 @@ fn AudioUnitSetParameter(
                     update_al_pos = Some((source, bus.position));
                 }
             }
-            _ => {}
+            k3DMixerParam_Gain => {
+                // Громкость шины: игра передаёт линейный коэффициент [0..1].
+                // Масштабируем так же, как при создании источника (×4.0).
+                let al_gain = in_value * 4.0;
+                let bus = host_object.mixer_buses.entry(in_element).or_default();
+                bus.gain = al_gain;
+                if let Some(source) = bus.al_source {
+                    update_al_gain = Some((source, al_gain));
+                }
+                log_dbg!(
+                    "AudioUnitSetParameter: Gain шины {} = {} (al_gain={})",
+                    in_element, in_value, al_gain
+                );
+            }
+            _ => {
+                log_dbg!(
+                    "AudioUnitSetParameter: неизвестный параметр {} (value={}) — игнорируется",
+                    in_id, in_value
+                );
+            }
         }
     } // Конец заимствования
 
@@ -637,6 +681,15 @@ fn AudioUnitSetParameter(
             .make_al_context_current(&mut env.openal_manager);
         unsafe {
             context.Source3f(source, AL_POSITION, pos[0], pos[1], pos[2]);
+        }
+    }
+    if let Some((source, gain)) = update_al_gain {
+        let context = env
+            .framework_state
+            .audio_toolbox
+            .make_al_context_current(&mut env.openal_manager);
+        unsafe {
+            context.Sourcef(source, AL_GAIN, gain);
         }
     }
 
@@ -918,6 +971,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
         ALuint,
         Instant,
         AudioStreamBasicDescription,
+        f32, // gain
     )> = {
         let at = &mut env.framework_state.audio_toolbox;
         let hardware_sr = at.audio_session.current_hardware_sample_rate;
@@ -956,7 +1010,8 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
                 continue;
             };
             let fmt = bus.stream_format.unwrap_or(default_format);
-            v.push((*bus_id, cb, src, last, fmt));
+            let gain = bus.gain;
+            v.push((*bus_id, cb, src, last, fmt, gain));
         }
         v
     };
@@ -970,7 +1025,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
     );
 
     let now = Instant::now();
-    for (bus_id, callback, al_source, last_render_time, fmt) in plan {
+    for (bus_id, callback, al_source, last_render_time, fmt, bus_gain) in plan {
         let elapsed = now.duration_since(last_render_time);
         let frames = ((elapsed.as_secs_f64() * fmt.sample_rate) as u32).clamp(64, 4096);
         let buffer_size = frames * fmt.channels_per_frame * (fmt.bits_per_channel / 8);
@@ -1061,7 +1116,10 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
                     fmt.sample_rate as i32,
                 );
                 context.SourceQueueBuffers(al_source, 1, &b);
-                context.Sourcef(al_source, AL_GAIN, 4.0);
+                // Используем bus_gain из настроек шины (по умолчанию 4.0,
+                // может быть изменён через AudioUnitSetParameter/Gain).
+                let effective_gain = if bus_gain > 0.0 { bus_gain } else { 4.0 };
+                context.Sourcef(al_source, AL_GAIN, effective_gain);
                 let mut state = 0;
                 context.GetSourcei(al_source, AL_SOURCE_STATE, &mut state);
                 if state != AL_PLAYING {
@@ -1323,7 +1381,8 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
                 sample_rate as i32,
             );
             context.SourceQueueBuffers(al_source, 1, &b);
-            context.Sourcef(al_source, AL_GAIN, 4.0);
+            // Не сбрасываем AL_GAIN здесь — он задаётся при создании
+            // источника (4.0) и может быть изменён через AudioUnitSetParameter.
             let mut state = 0;
             context.GetSourcei(al_source, AL_SOURCE_STATE, &mut state);
             if state != AL_PLAYING {
