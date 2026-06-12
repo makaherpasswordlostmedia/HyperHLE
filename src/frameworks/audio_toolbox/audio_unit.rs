@@ -331,7 +331,7 @@ fn AudioUnitSetProperty(
                 let al_gain = vol * 4.0;
                 if in_scope == kAudioUnitScope_Input {
                     let bus = host_object.mixer_buses.entry(in_element).or_default();
-                    bus.volume = al_gain;
+                    bus.gain = al_gain;
                     if let Some(src) = bus.al_source {
                         update_al_distance = Some((src, bus.distance_params));
                         // Перезаписываем update_al_distance временно —
@@ -655,7 +655,7 @@ fn AudioUnitSetParameter(
                 // Масштабируем так же, как при создании источника (×4.0).
                 let al_gain = in_value * 4.0;
                 let bus = host_object.mixer_buses.entry(in_element).or_default();
-                bus.volume = al_gain;
+                bus.gain = al_gain;
                 if let Some(source) = bus.al_source {
                     update_al_gain = Some((source, al_gain));
                 }
@@ -700,7 +700,7 @@ fn AudioUnitGetParameter(
     env: &mut Environment,
     in_unit: AudioUnit,
     in_id: AudioUnitParameterID,
-    in_scope: AudioUnitScope,
+    _in_scope: AudioUnitScope,
     in_element: AudioUnitElement,
     out_value: MutPtr<AudioUnitParameterValue>,
 ) -> OSStatus {
@@ -708,11 +708,26 @@ fn AudioUnitGetParameter(
         "AudioUnitGetParameter(unit={:?}, param={}, scope={}, element={})",
         in_unit,
         in_id,
-        in_scope,
+        _in_scope,
         in_element
     );
     if !out_value.is_null() {
-        env.mem.write(out_value, 1.0);
+        let value = match in_id {
+            k3DMixerParam_Gain => {
+                // Возвращаем сохранённую громкость шины (обратно масштабируем
+                // из al_gain в диапазон [0..1], который ожидает гость).
+                let al_gain = audio_components::State::get(&mut env.framework_state)
+                    .audio_component_instances
+                    .get(&in_unit)
+                    .and_then(|obj| obj.mixer_buses.get(&in_element))
+                    .map(|bus| bus.volume)
+                    .unwrap_or(4.0);
+                // al_gain = guest_value * 4.0  =>  guest_value = al_gain / 4.0
+                al_gain / 4.0
+            }
+            _ => 1.0,
+        };
+        env.mem.write(out_value, value);
     }
     0
 }
@@ -768,7 +783,8 @@ fn AudioOutputUnitStart(env: &mut Environment, ci: AudioUnit) -> OSStatus {
 pub fn setup_audio_unit_for_render(env: &mut Environment, ci: AudioUnit) {
     // Сначала собираем номера шин, у которых есть callback, но ещё нет
     // OpenAL-источника, чтобы обойтись без двойного `&mut`.
-    let bus_ids_needing_source: Vec<u32> = {
+    // Собираем (bus_id, сохранённый gain) для шин без OpenAL-источника.
+    let bus_ids_needing_source: Vec<(u32, f32)> = {
         let state = audio_components::State::get(&mut env.framework_state);
         let Some(obj) = state.audio_component_instances.get(&ci) else {
             return;
@@ -777,7 +793,9 @@ pub fn setup_audio_unit_for_render(env: &mut Environment, ci: AudioUnit) {
             .iter()
             .filter_map(|(id, bus)| {
                 if bus.render_callback.is_some() && bus.al_source.is_none() {
-                    Some(*id)
+                    // Если игра ещё не задала громкость — используем 4.0.
+                    let gain = if bus.volume > 0.0 { bus.volume } else { 4.0 };
+                    Some((*id, gain))
                 } else {
                     None
                 }
@@ -812,11 +830,11 @@ pub fn setup_audio_unit_for_render(env: &mut Environment, ci: AudioUnit) {
     };
 
     let mut bus_sources: Vec<(u32, ALuint)> = Vec::with_capacity(bus_ids_needing_source.len());
-    for bus_id in &bus_ids_needing_source {
+    for (bus_id, bus_gain) in &bus_ids_needing_source {
         let mut s: ALuint = 0;
         unsafe {
             context.GenSources(1, &mut s);
-            context.Sourcef(s, AL_GAIN, 4.0);
+            context.Sourcef(s, AL_GAIN, *bus_gain);
             context.SourcePlay(s);
         }
         bus_sources.push((*bus_id, s));
@@ -1010,7 +1028,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
                 continue;
             };
             let fmt = bus.stream_format.unwrap_or(default_format);
-            let gain = bus.volume;
+            let gain = bus.gain;
             v.push((*bus_id, cb, src, last, fmt, gain));
         }
         v
