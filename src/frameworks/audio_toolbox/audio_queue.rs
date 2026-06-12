@@ -1058,9 +1058,25 @@ pub fn decode_buffer(
             };
 
             let f = match (actual_channels_per_frame, format.bits_per_channel) {
-                (1, 8) => al::AL_FORMAT_MONO8,
+                // 8-bit PCM: convert to 16-bit (AL_FORMAT_MONO8/STEREO8 is quiet on many Android OpenAL implementations)
+                (1, 8) => {
+                    let mut out16 = Vec::<u8>::with_capacity(processed_data.len() * 2);
+                    for &s in &processed_data {
+                        // unsigned 8-bit (0..255, silence=128) → signed 16-bit
+                        let val: i16 = ((s as i16) - 128) * 256;
+                        out16.extend_from_slice(&val.to_le_bytes());
+                    }
+                    return (al::AL_FORMAT_MONO16, format.sample_rate as ALsizei, out16);
+                }
+                (2, 8) => {
+                    let mut out16 = Vec::<u8>::with_capacity(processed_data.len() * 2);
+                    for &s in &processed_data {
+                        let val: i16 = ((s as i16) - 128) * 256;
+                        out16.extend_from_slice(&val.to_le_bytes());
+                    }
+                    return (al::AL_FORMAT_STEREO16, format.sample_rate as ALsizei, out16);
+                }
                 (1, 16) => al::AL_FORMAT_MONO16,
-                (2, 8) => al::AL_FORMAT_STEREO8,
                 (2, 16) => al::AL_FORMAT_STEREO16,
                 // --- ДОБАВЛЕНА РАБОЧАЯ ВЕТКА ДЛЯ (1, 32) ---
                 (1, 32) => {
