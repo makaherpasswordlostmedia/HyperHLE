@@ -1058,20 +1058,23 @@ pub fn decode_buffer(
             };
 
             let f = match (actual_channels_per_frame, format.bits_per_channel) {
-                // 8-bit PCM: convert to 16-bit (AL_FORMAT_MONO8/STEREO8 is quiet on many Android OpenAL implementations)
+                // 8-bit PCM: convert to 16-bit with normalization
                 (1, 8) => {
+                    let max_val = processed_data.iter().map(|&s| (s as i16 - 128).unsigned_abs()).max().unwrap_or(1);
+                    let scale = if max_val > 0 { 32767.0 / max_val as f32 } else { 1.0 };
                     let mut out16 = Vec::<u8>::with_capacity(processed_data.len() * 2);
                     for &s in &processed_data {
-                        // unsigned 8-bit (0..255, silence=128) → signed 16-bit
-                        let val: i16 = ((s as i16) - 128) * 256;
+                        let val: i16 = (((s as i16) - 128) as f32 * scale) as i16;
                         out16.extend_from_slice(&val.to_le_bytes());
                     }
                     return (al::AL_FORMAT_MONO16, format.sample_rate as ALsizei, out16);
                 }
                 (2, 8) => {
+                    let max_val = processed_data.iter().map(|&s| (s as i16 - 128).unsigned_abs()).max().unwrap_or(1);
+                    let scale = if max_val > 0 { 32767.0 / max_val as f32 } else { 1.0 };
                     let mut out16 = Vec::<u8>::with_capacity(processed_data.len() * 2);
                     for &s in &processed_data {
-                        let val: i16 = ((s as i16) - 128) * 256;
+                        let val: i16 = (((s as i16) - 128) as f32 * scale) as i16;
                         out16.extend_from_slice(&val.to_le_bytes());
                     }
                     return (al::AL_FORMAT_STEREO16, format.sample_rate as ALsizei, out16);
