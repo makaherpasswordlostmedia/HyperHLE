@@ -199,6 +199,7 @@ fn AudioUnitSetProperty(
         in_data_size
     );
     let mut update_al_distance = None;
+    let mut update_al_gain: Option<(ALuint, f32)> = None;
 
     // Ограничиваем область видимости заимствования
     {
@@ -331,12 +332,9 @@ fn AudioUnitSetProperty(
                 let al_gain = vol * 4.0;
                 if in_scope == kAudioUnitScope_Input {
                     let bus = host_object.mixer_buses.entry(in_element).or_default();
-                    bus.volume = al_gain;
+                    bus.gain = al_gain;
                     if let Some(src) = bus.al_source {
-                        update_al_distance = Some((src, bus.distance_params));
-                        // Перезаписываем update_al_distance временно —
-                        // применяем gain отдельно после borrow.
-                        // NOTE: Используем отдельное поле update_al_volume.
+                        update_al_gain = Some((src, al_gain));
                     }
                 }
                 log_dbg!(
@@ -432,6 +430,15 @@ fn AudioUnitSetProperty(
             context.Sourcef(source, AL_REFERENCE_DISTANCE, params.reference_distance);
             context.Sourcef(source, AL_MAX_DISTANCE, params.maximum_distance);
             context.Sourcef(source, AL_ROLLOFF_FACTOR, params.rolloff_factor);
+        }
+    }
+    if let Some((source, gain)) = update_al_gain {
+        let context = env
+            .framework_state
+            .audio_toolbox
+            .make_al_context_current(&mut env.openal_manager);
+        unsafe {
+            context.Sourcef(source, AL_GAIN, gain);
         }
     }
 
@@ -655,7 +662,7 @@ fn AudioUnitSetParameter(
                 // Масштабируем так же, как при создании источника (×4.0).
                 let al_gain = in_value * 4.0;
                 let bus = host_object.mixer_buses.entry(in_element).or_default();
-                bus.volume = al_gain;
+                bus.gain = al_gain;
                 if let Some(source) = bus.al_source {
                     update_al_gain = Some((source, al_gain));
                 }
@@ -720,7 +727,7 @@ fn AudioUnitGetParameter(
                     .audio_component_instances
                     .get(&in_unit)
                     .and_then(|obj| obj.mixer_buses.get(&in_element))
-                    .map(|bus| bus.volume)
+                    .map(|bus| bus.gain)
                     .unwrap_or(4.0);
                 // al_gain = guest_value * 4.0  =>  guest_value = al_gain / 4.0
                 al_gain / 4.0
@@ -1028,7 +1035,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
                 continue;
             };
             let fmt = bus.stream_format.unwrap_or(default_format);
-            let gain = bus.volume;
+            let gain = bus.gain;
             v.push((*bus_id, cb, src, last, fmt, gain));
         }
         v
