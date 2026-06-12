@@ -332,7 +332,7 @@ fn AudioUnitSetProperty(
                 let al_gain = vol * 4.0;
                 if in_scope == kAudioUnitScope_Input {
                     let bus = host_object.mixer_buses.entry(in_element).or_default();
-                    bus.gain = al_gain;
+                    bus.volume = al_gain;
                     if let Some(src) = bus.al_source {
                         update_al_gain = Some((src, al_gain));
                     }
@@ -662,7 +662,7 @@ fn AudioUnitSetParameter(
                 // Масштабируем так же, как при создании источника (×4.0).
                 let al_gain = in_value * 4.0;
                 let bus = host_object.mixer_buses.entry(in_element).or_default();
-                bus.gain = al_gain;
+                bus.volume = al_gain;
                 if let Some(source) = bus.al_source {
                     update_al_gain = Some((source, al_gain));
                 }
@@ -727,7 +727,7 @@ fn AudioUnitGetParameter(
                     .audio_component_instances
                     .get(&in_unit)
                     .and_then(|obj| obj.mixer_buses.get(&in_element))
-                    .map(|bus| bus.gain)
+                    .map(|bus| bus.volume)
                     .unwrap_or(4.0);
                 // al_gain = guest_value * 4.0  =>  guest_value = al_gain / 4.0
                 al_gain / 4.0
@@ -1035,7 +1035,7 @@ fn render_audio_unit_buses(env: &mut Environment, audio_unit: AudioUnit) {
                 continue;
             };
             let fmt = bus.stream_format.unwrap_or(default_format);
-            let gain = bus.gain;
+            let gain = bus.volume;
             v.push((*bus_id, cb, src, last, fmt, gain));
         }
         v
