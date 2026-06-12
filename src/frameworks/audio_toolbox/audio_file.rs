@@ -280,8 +280,8 @@ pub fn AudioFileOpenURL(
     }
 
     let path = to_rust_path(env, in_file_ref);
-    let (host_object, open_failed) = match audio::AudioFile::open_for_reading(path.clone(), &env.fs) {
-        Ok(audio_file) => (AudioFileHostObject::Real(audio_file), false),
+    let host_object = match audio::AudioFile::open_for_reading(path.clone(), &env.fs) {
+        Ok(audio_file) => AudioFileHostObject::Real(audio_file),
         Err(error) => {
             log!(
                 "Внимание: AudioFileOpenURL() для пути {:?} завершился ошибкой: \
@@ -289,7 +289,7 @@ pub fn AudioFileOpenURL(
                 path,
                 error
             );
-            (create_dummy_audio_file(), true)
+            create_dummy_audio_file()
         }
     };
 
@@ -300,10 +300,6 @@ pub fn AudioFileOpenURL(
 
     if !out_audio_file.is_null() {
         env.mem.write(out_audio_file, guest_audio_file);
-    }
-
-    if open_failed {
-        return kAudioFileInvalidFileError;
     }
 
     kAudioFileSuccess
