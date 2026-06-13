@@ -572,6 +572,7 @@ const SYS_GETUID: i32 = 24;
 const SYS_GETEUID: i32 = 25;
 const SYS_GETGID: i32 = 47;
 const SYS_GETEGID: i32 = 43;
+const SYS_PTRACE: i32 = 26;
 
 /// `long syscall(int number, ...);`
 ///
@@ -604,6 +605,16 @@ fn syscall(env: &mut Environment, number: i32, _args: DotDotDot) -> i32 {
             // from 0 upward; the kernel's thread-id space is opaque to
             // userspace, so the only contract is non-zero unique IDs.
             (env.current_thread as i32) + 1
+        }
+        SYS_PTRACE => {
+            // ptrace(2) on Darwin/XNU: selector 26.
+            // iOS apps (especially Gameloft titles) call ptrace(PT_DENY_ATTACH, 0, 0, 0)
+            // as an anti-debug measure. In a non-debug emulator context we can
+            // safely return 0 (success) — the app just wants to know the call
+            // didn't fail, which is the normal kernel response when the process
+            // is not being traced.
+            log_dbg!("syscall(SYS_PTRACE) -> 0 (stubbed)");
+            0
         }
         _ => {
             log!("Warning: syscall({}) unimplemented; returning -1/ENOSYS", number);
