@@ -413,6 +413,76 @@ pub const CLASSES: ClassExports = objc_classes! {
     true
 }
 
+- (bool)scanLongLong:(MutPtr<i64>)result {
+    skip_characters(env, this);
+
+    let NSScannerHostObject { to_be_skipped, string, len, pos } = std::mem::take(env.objc.borrow_mut::<NSScannerHostObject>(this));
+    let left: id = msg![env; string substringFromIndex:pos];
+    if left == nil {
+        *env.objc.borrow_mut::<NSScannerHostObject>(this) = NSScannerHostObject { to_be_skipped, string, len, pos };
+        return false;
+    }
+
+    let st = to_rust_string(env, left);
+    let mut cutoff = 0;
+    for (i, c) in st.char_indices() {
+        if c.is_ascii_digit() || ((c == '+' || c == '-') && i == 0) {
+            cutoff = i + 1;
+        } else {
+            break;
+        }
+    }
+    if cutoff == 0 {
+        log_dbg!("scanLongLong: no valid int found for '{}'", st);
+        *env.objc.borrow_mut::<NSScannerHostObject>(this) = NSScannerHostObject { to_be_skipped, string, len, pos };
+        return false;
+    }
+
+    if !result.is_null() {
+        let res: i64 = st[..cutoff].parse().unwrap_or(0);
+        log_dbg!("scanLongLong: from '{}' -> {}", st, res);
+        env.mem.write(result, res);
+    }
+
+    *env.objc.borrow_mut::<NSScannerHostObject>(this) = NSScannerHostObject { to_be_skipped, string, len, pos: pos + cutoff as NSUInteger };
+    true
+}
+
+- (bool)scanUnsignedLongLong:(MutPtr<u64>)result {
+    skip_characters(env, this);
+
+    let NSScannerHostObject { to_be_skipped, string, len, pos } = std::mem::take(env.objc.borrow_mut::<NSScannerHostObject>(this));
+    let left: id = msg![env; string substringFromIndex:pos];
+    if left == nil {
+        *env.objc.borrow_mut::<NSScannerHostObject>(this) = NSScannerHostObject { to_be_skipped, string, len, pos };
+        return false;
+    }
+
+    let st = to_rust_string(env, left);
+    let mut cutoff = 0;
+    for (i, c) in st.char_indices() {
+        if c.is_ascii_digit() || (c == '+' && i == 0) {
+            cutoff = i + 1;
+        } else {
+            break;
+        }
+    }
+    if cutoff == 0 {
+        log_dbg!("scanUnsignedLongLong: no valid int found for '{}'", st);
+        *env.objc.borrow_mut::<NSScannerHostObject>(this) = NSScannerHostObject { to_be_skipped, string, len, pos };
+        return false;
+    }
+
+    if !result.is_null() {
+        let res: u64 = st[..cutoff].parse().unwrap_or(0);
+        log_dbg!("scanUnsignedLongLong: from '{}' -> {}", st, res);
+        env.mem.write(result, res);
+    }
+
+    *env.objc.borrow_mut::<NSScannerHostObject>(this) = NSScannerHostObject { to_be_skipped, string, len, pos: pos + cutoff as NSUInteger };
+    true
+}
+
 @end
 
 };
