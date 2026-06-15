@@ -1075,6 +1075,79 @@ fn CFURLGetTypeID(_env: &mut Environment) -> u32 {
 
 // MARK: - Exports
 
+/// `CFURLCreateDataAndPropertiesFromResource` — reads the resource at `url`
+/// into a CFData (toll-free bridged NSData) and optionally returns a
+/// properties dictionary.  Only file:// URLs are supported here; all other
+/// schemes return false.
+///
+/// Signature (from CFURLAccess.h):
+/// ```
+/// Boolean CFURLCreateDataAndPropertiesFromResource(
+///     CFAllocatorRef alloc,
+///     CFURLRef url,
+///     CFDataRef *resourceData,
+///     CFDictionaryRef *properties,
+///     CFArrayRef desiredProperties,
+///     SInt32 *errorCode
+/// );
+/// ```
+fn CFURLCreateDataAndPropertiesFromResource(
+    env: &mut Environment,
+    _alloc: CFAllocatorRef,
+    url: CFURLRef,
+    resource_data: MutPtr<id>,  // CFDataRef* — out
+    properties: MutPtr<id>,     // CFDictionaryRef* — out, nullable
+    _desired_properties: id,    // CFArrayRef, ignored
+    error_code: MutPtr<i32>,    // SInt32* — out, nullable
+) -> bool {
+    if url.is_null() {
+        if !error_code.is_null() {
+            env.mem.write(error_code, -1i32);
+        }
+        return false;
+    }
+
+    // Get file-system path from the URL via NSString path message.
+    let path_str: id = msg![env; url path];
+    if path_str.is_null() {
+        if !error_code.is_null() {
+            env.mem.write(error_code, -1i32);
+        }
+        return false;
+    }
+
+    // Load file contents using NSData dataWithContentsOfFile:
+    let data: id = msg_class![env; NSData dataWithContentsOfFile:path_str];
+    if data.is_null() {
+        log!("CFURLCreateDataAndPropertiesFromResource: failed to read '{}'", to_rust_string(env, path_str));
+        if !error_code.is_null() {
+            env.mem.write(error_code, -1i32);
+        }
+        return false;
+    }
+
+    retain(env, data);
+
+    if !resource_data.is_null() {
+        env.mem.write(resource_data, data);
+    } else {
+        release(env, data);
+    }
+
+    // Return an empty dictionary for properties (caller must handle nil gracefully).
+    if !properties.is_null() {
+        let dict: id = msg_class![env; NSMutableDictionary dictionary];
+        retain(env, dict);
+        env.mem.write(properties, dict);
+    }
+
+    if !error_code.is_null() {
+        env.mem.write(error_code, 0i32);
+    }
+
+    true
+}
+
 pub const FUNCTIONS: FunctionExports = &[
     // Retain/Release
     export_c_func!(CFURLRetain(_)),
@@ -1134,6 +1207,7 @@ pub const FUNCTIONS: FunctionExports = &[
         _
     )),
     export_c_func!(CFURLCreateStringByAddingPercentEscapes(_, _, _, _, _)),
+    export_c_func!(CFURLCreateDataAndPropertiesFromResource(_, _, _, _, _, _)),
     // Type Info — CFURLGetTypeID is exported from cf_type; not duplicated.
 ];
 
