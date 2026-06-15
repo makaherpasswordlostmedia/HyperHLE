@@ -4105,6 +4105,43 @@ fn glGetInternalformativ(
     });
 }
 
+// -- Vertex attribute queries (OpenGL ES 2.0 §6.1.10) --
+fn glGetVertexAttribiv(
+    env: &mut Environment,
+    index: GLuint,
+    pname: GLenum,
+    params: MutPtr<GLint>,
+) {
+    let params = env.mem.ptr_at_mut(params, 4);
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.GetVertexAttribiv(index, pname, params)
+    });
+}
+
+fn glGetVertexAttribfv(
+    env: &mut Environment,
+    index: GLuint,
+    pname: GLenum,
+    params: MutPtr<GLfloat>,
+) {
+    let params = env.mem.ptr_at_mut(params, 4);
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.GetVertexAttribfv(index, pname, params)
+    });
+}
+
+fn glGetVertexAttribPointerv(
+    env: &mut Environment,
+    index: GLuint,
+    pname: GLenum,
+    pointer: MutPtr<MutVoidPtr>,
+) {
+    let pointer = env.mem.ptr_at_mut(pointer, 1);
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.GetVertexAttribPointerv(index, pname, pointer as *mut *mut _)
+    });
+}
+
 // -- Integer vertex attributes (OpenGL ES 3.0 §2.7 / §6.1.10) --
 fn glVertexAttribI4iv(env: &mut Environment, index: GLuint, v: ConstPtr<GLint>) {
     let v = env.mem.ptr_at(v, 4);
@@ -5011,6 +5048,9 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glGetInternalformativ(_, _, _, _, _)),
     export_c_func!(glVertexAttribI4iv(_, _)),
     export_c_func!(glVertexAttribI4uiv(_, _)),
+    export_c_func!(glGetVertexAttribiv(_, _, _)),
+    export_c_func!(glGetVertexAttribfv(_, _, _)),
+    export_c_func!(glGetVertexAttribPointerv(_, _, _)),
     export_c_func!(glGetVertexAttribIiv(_, _, _)),
     export_c_func!(glGetVertexAttribIuiv(_, _, _)),
     export_c_func!(glGetUniformuiv(_, _, _)),
