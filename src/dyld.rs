@@ -1357,7 +1357,7 @@ impl Dyld {
             Self::SVC_THREAD_EXIT | Self::SVC_RETURN_TO_HOST => {
                 // These are handled before this dispatch; reaching here
                 // would indicate the SVC numbering scheme is corrupted.
-                log!(
+                log_once!(
                     "Warning: Dyld::get_svc_handler received SVC #{} (thread exit / return to host) at {:#x}; this should be handled earlier.",
                     svc, svc_pc
                 );
@@ -1369,7 +1369,7 @@ impl Dyld {
                         as usize,
                 );
                 let Some(&(symbol, f)) = f else {
-                    log!(
+                    log_once!(
                         "Warning: Unexpected SVC #{} at {:#x}; treating as no-op (returning to caller).",
                         svc, svc_pc
                     );
