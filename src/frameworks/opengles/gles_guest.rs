@@ -2815,7 +2815,12 @@ fn glShaderSource(
         } else {
             env.mem.cstr_at(str_ptr).to_vec()
         };
-        let cs = std::ffi::CString::new(bytes_vec).unwrap_or_default();
+        // CString::new rejects vecs with interior null bytes, which can occur
+        // in length-delimited shader sources — unwrap_or_default() would
+        // silently produce an empty string, causing "Unexpected end of source".
+        // Instead, strip any embedded nulls so the full source is preserved.
+        let bytes_clean: Vec<u8> = bytes_vec.into_iter().filter(|&b| b != 0).collect();
+        let cs = std::ffi::CString::new(bytes_clean).unwrap_or_default();
         owned.push(cs);
     }
     let ptrs: Vec<*const std::os::raw::c_char> = owned.iter().map(|s| s.as_ptr()).collect();
@@ -4100,43 +4105,6 @@ fn glGetInternalformativ(
     });
 }
 
-// -- Vertex attribute queries (OpenGL ES 2.0 §6.1.10) --
-fn glGetVertexAttribiv(
-    env: &mut Environment,
-    index: GLuint,
-    pname: GLenum,
-    params: MutPtr<GLint>,
-) {
-    let params = env.mem.ptr_at_mut(params, 4);
-    with_ctx_and_mem(env, |gles, _mem| unsafe {
-        gles.GetVertexAttribiv(index, pname, params)
-    });
-}
-
-fn glGetVertexAttribfv(
-    env: &mut Environment,
-    index: GLuint,
-    pname: GLenum,
-    params: MutPtr<GLfloat>,
-) {
-    let params = env.mem.ptr_at_mut(params, 4);
-    with_ctx_and_mem(env, |gles, _mem| unsafe {
-        gles.GetVertexAttribfv(index, pname, params)
-    });
-}
-
-fn glGetVertexAttribPointerv(
-    env: &mut Environment,
-    index: GLuint,
-    pname: GLenum,
-    pointer: MutPtr<MutVoidPtr>,
-) {
-    let pointer = env.mem.ptr_at_mut(pointer, 1);
-    with_ctx_and_mem(env, |gles, _mem| unsafe {
-        gles.GetVertexAttribPointerv(index, pname, pointer as *mut *mut _)
-    });
-}
-
 // -- Integer vertex attributes (OpenGL ES 3.0 §2.7 / §6.1.10) --
 fn glVertexAttribI4iv(env: &mut Environment, index: GLuint, v: ConstPtr<GLint>) {
     let v = env.mem.ptr_at(v, 4);
@@ -5043,9 +5011,6 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glGetInternalformativ(_, _, _, _, _)),
     export_c_func!(glVertexAttribI4iv(_, _)),
     export_c_func!(glVertexAttribI4uiv(_, _)),
-    export_c_func!(glGetVertexAttribiv(_, _, _)),
-    export_c_func!(glGetVertexAttribfv(_, _, _)),
-    export_c_func!(glGetVertexAttribPointerv(_, _, _)),
     export_c_func!(glGetVertexAttribIiv(_, _, _)),
     export_c_func!(glGetVertexAttribIuiv(_, _, _)),
     export_c_func!(glGetUniformuiv(_, _, _)),
