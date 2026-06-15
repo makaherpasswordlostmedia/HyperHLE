@@ -1799,21 +1799,47 @@ fn __divsi3(_env: &mut Environment, a: i32, b: i32) -> i32 {
     }
 }
 
-fn CFUUIDCreate(_env: &mut Environment, _alloc: ConstVoidPtr) -> MutVoidPtr {
-    // ImplUUIDCreate
-    log!("CFUUIDCreate: returning null to safely bypass CFRelease");
-    crate::mem::Ptr::null()
+fn CFUUIDCreate(env: &mut Environment, _alloc: ConstVoidPtr) -> MutVoidPtr {
+    // Allocate 16 bytes for the UUID and fill with random data (UUID v4).
+    let ptr: MutPtr<u8> = env.mem.alloc(16).cast();
+    let bytes = env.mem.bytes_at_mut(ptr, 16);
+    for i in 0..4u32 {
+        let r = {
+            env.libc_state.stdlib.arc4random = prng(env.libc_state.stdlib.arc4random);
+            env.libc_state.stdlib.arc4random
+        };
+        let base = (i * 4) as usize;
+        bytes[base]     = (r & 0xFF) as u8;
+        bytes[base + 1] = ((r >> 8)  & 0xFF) as u8;
+        bytes[base + 2] = ((r >> 16) & 0xFF) as u8;
+        bytes[base + 3] = ((r >> 24) & 0xFF) as u8;
+    }
+    // Set version (4) and variant bits per RFC 4122.
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    ptr.cast()
 }
 
 fn CFUUIDCreateString(
     env: &mut Environment,
     _alloc: ConstVoidPtr,
-    _uuid: ConstVoidPtr,
+    uuid: ConstVoidPtr,
 ) -> MutVoidPtr {
-    // ImplUUIDString
-    log!("CFUUIDCreateString: returning fake toll-free bridged NSString");
-    let uuid_str = b"12345678-1234-1234-1234-1234567890AB";
-    let cstr_ptr = env.mem.alloc_and_write_cstr(uuid_str);
+    // Read the 16-byte UUID struct that CFUUIDCreate allocated.
+    let ptr: crate::mem::ConstPtr<u8> = uuid.cast();
+    let mut bytes = [0u8; 16];
+    for i in 0..16u32 {
+        bytes[i as usize] = env.mem.read(ptr + i);
+    }
+    let uuid_str = format!(
+        "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        bytes[0],  bytes[1],  bytes[2],  bytes[3],
+        bytes[4],  bytes[5],
+        bytes[6],  bytes[7],
+        bytes[8],  bytes[9],
+        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+    );
+    let cstr_ptr = env.mem.alloc_and_write_cstr(uuid_str.as_bytes());
     let nsstring_class = env.objc.get_known_class("NSString", &mut env.mem);
     let sel_alloc = env.objc.lookup_selector("alloc").unwrap();
     let sel_init = env.objc.lookup_selector("initWithUTF8String:").unwrap();
@@ -1821,7 +1847,15 @@ fn CFUUIDCreateString(
         crate::objc::msg_send_no_type_checking(env, (nsstring_class, sel_alloc));
     let string: crate::objc::id =
         crate::objc::msg_send_no_type_checking(env, (alloced, sel_init, cstr_ptr.cast_const()));
+    env.mem.free(cstr_ptr.cast());
     string.cast()
+}
+
+fn CFUUIDRelease(env: &mut Environment, uuid: MutVoidPtr) {
+    // Free the 16-byte buffer allocated by CFUUIDCreate.
+    if !uuid.is_null() {
+        env.mem.free(uuid);
+    }
 }
 
 fn class_respondsToSelector(
@@ -2084,6 +2118,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(__stack_chk_fail()),
     export_c_func!(CFUUIDCreate(_)),
     export_c_func!(CFUUIDCreateString(_, _)),
+    export_c_func!(CFUUIDRelease(_)),
     export_c_func!(__modsi3(_, _)),
     export_c_func!(__divsi3(_, _)),
     export_c_func!(__fixdfdi(_)),
