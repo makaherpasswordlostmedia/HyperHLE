@@ -558,7 +558,10 @@ fn AudioFileStreamOpen(
 /// the first time, fires off the property-listener callback(s) that tell the
 /// client the data format is known and it's ready to produce packets.
 /// Returns `true` if `parsed_audio_file` is populated after this call.
-fn try_parse_buffered_stream(env: &mut Environment, in_audio_file_stream: AudioFileStreamID) -> bool {
+fn try_parse_buffered_stream(
+    env: &mut Environment,
+    in_audio_file_stream: AudioFileStreamID,
+) -> bool {
     let host_object = State::get(&mut env.framework_state)
         .audio_file_streams
         .get_mut(&in_audio_file_stream)
@@ -757,13 +760,17 @@ fn AudioFileStreamGetProperty(
         kAudioFileStreamProperty_DataFormat => {
             let desc =
                 AudioStreamBasicDescription::from_audio_description(audio_file.audio_description());
-            env.mem.write(io_property_data_size, guest_size_of::<AudioStreamBasicDescription>());
+            env.mem.write(
+                io_property_data_size,
+                guest_size_of::<AudioStreamBasicDescription>(),
+            );
             env.mem.write(out_property_data.cast(), desc);
         }
         kAudioFileStreamProperty_MaximumPacketSize => {
             let packet_size_upper_bound: u32 = audio_file.packet_size_upper_bound();
             env.mem.write(io_property_data_size, guest_size_of::<u32>());
-            env.mem.write(out_property_data.cast(), packet_size_upper_bound);
+            env.mem
+                .write(out_property_data.cast(), packet_size_upper_bound);
         }
         kAudioFileStreamProperty_AudioDataByteCount => {
             let byte_count: u64 = audio_file.byte_count();
@@ -801,7 +808,10 @@ fn AudioFileStreamSeek(
     kAudioFileUnspecifiedError
 }
 
-fn AudioFileStreamClose(env: &mut Environment, in_audio_file_stream: AudioFileStreamID) -> OSStatus {
+fn AudioFileStreamClose(
+    env: &mut Environment,
+    in_audio_file_stream: AudioFileStreamID,
+) -> OSStatus {
     return_if_null!(in_audio_file_stream);
 
     let Some(_host_object) = State::get(&mut env.framework_state)
