@@ -105,8 +105,7 @@ const kAudioFilePropertyPacketTableInfo: AudioFilePropertyID = fourcc(b"pnfo");
 /// Usually a FourCC. These are `AudioFileStreamPropertyID`s, distinct from
 /// (but overlapping in spirit with) `AudioFilePropertyID`s.
 type AudioFileStreamPropertyID = u32;
-const kAudioFileStreamProperty_ReadyToProducePackets: AudioFileStreamPropertyID =
-    fourcc(b"redy");
+const kAudioFileStreamProperty_ReadyToProducePackets: AudioFileStreamPropertyID = fourcc(b"redy");
 const kAudioFileStreamProperty_DataFormat: AudioFileStreamPropertyID = fourcc(b"dfmt");
 const kAudioFileStreamProperty_FileFormat: AudioFileStreamPropertyID = fourcc(b"ffmt");
 const kAudioFileStreamProperty_MagicCookieData: AudioFileStreamPropertyID = fourcc(b"mgic");
@@ -627,10 +626,7 @@ fn AudioFileStreamParseBytes(
 ) -> OSStatus {
     return_if_null!(in_audio_file_stream);
 
-    let new_bytes = env
-        .mem
-        .bytes_at(in_data.cast(), in_data_byte_size)
-        .to_vec();
+    let new_bytes = env.mem.bytes_at(in_data.cast(), in_data_byte_size).to_vec();
 
     let host_object = State::get(&mut env.framework_state)
         .audio_file_streams
@@ -676,7 +672,8 @@ fn AudioFileStreamParseBytes(
     let packets_proc = host_object.packets_proc;
 
     let chunk_ptr: MutPtr<u8> = env.mem.alloc(undelivered_bytes as GuestUSize).cast();
-    env.mem.bytes_at_mut(chunk_ptr, undelivered_bytes as GuestUSize)
+    env.mem
+        .bytes_at_mut(chunk_ptr, undelivered_bytes as GuestUSize)
         .copy_from_slice(&chunk);
 
     let () = packets_proc.call_from_host(
