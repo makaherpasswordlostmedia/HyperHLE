@@ -47,11 +47,12 @@ unsafe impl SafeRead for OpaqueAudioFileStreamID {}
 
 pub type AudioFileStreamID = MutPtr<OpaqueAudioFileStreamID>;
 
-/// Host-side state for `AudioFileStream*`. Since our underlying `audio::AudioFile`
-/// parser needs the whole file up-front, we buffer every byte handed to us via
-/// `AudioFileStreamParseBytes()` and only actually parse once we can. This is not
-/// "real" incremental/streaming parsing, but it lets apps that use the
-/// AudioFileStream API (rather than AudioFile) still get working audio playback.
+/// Host-side state for `AudioFileStream*`. Since our underlying
+/// `audio::AudioFile` parser needs the whole file up-front, we buffer every
+/// byte handed to us via `AudioFileStreamParseBytes()` and only actually
+/// parse once we can. This is not "real" incremental/streaming parsing, but
+/// it lets apps that use the AudioFileStream API (rather than AudioFile)
+/// still get working audio playback.
 pub struct AudioFileStreamHostObject {
     client_data: MutVoidPtr,
     property_listener_proc: GuestFunction,
@@ -117,7 +118,8 @@ const kAudioFileStreamProperty_AudioDataPacketCount: AudioFileStreamPropertyID =
 #[allow(dead_code)]
 const kAudioFileStreamPropertyFlag_PropertyIsCached: u32 = 1;
 
-/// Bit flags passed to the packets callback. We only ever pass 0 (no discontinuity).
+/// Bit flags passed to the packets callback. We only ever pass 0 (no
+/// discontinuity).
 #[allow(dead_code)]
 const kAudioFileStreamParseFlag_Discontinuity: u32 = 1;
 
