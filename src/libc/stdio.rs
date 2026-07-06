@@ -377,7 +377,9 @@ fn ungetc(env: &mut Environment, c: i32, file_ptr: MutPtr<FILE>) -> i32 {
         .libc_state
         .stdio
         .get_file_host_obj_mut(&mut env.mem, file_ptr);
-    pushbacks.push(c.try_into().unwrap());
+    // ungetc() takes an int, but only the low 8 bits (as unsigned char) are
+    // pushed back, so truncate rather than fail on out-of-range values.
+    pushbacks.push(c as u32 as u8);
     log_dbg!("ungetc pushbacks: {:?}", pushbacks);
     c
 }
@@ -421,7 +423,11 @@ fn fputc(env: &mut Environment, c: i32, stream: MutPtr<FILE>) -> i32 {
     // TODO: handle errno properly
     set_errno(env, 0);
 
-    let ptr: MutPtr<u8> = env.mem.alloc_and_write(c.try_into().unwrap());
+    // fputc() takes an int, but only the low 8 bits (as unsigned char) are
+    // actually written, so we must truncate rather than fail on values
+    // outside 0..=255 (e.g. negative values passed in as plain int).
+    let byte = c as u32 as u8;
+    let ptr: MutPtr<u8> = env.mem.alloc_and_write(byte);
     let res = fwrite(env, ptr.cast_const().cast(), 1, 1, stream)
         .try_into()
         .unwrap();
