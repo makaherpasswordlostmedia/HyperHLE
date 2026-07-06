@@ -148,7 +148,7 @@ pub fn CGBitmapContextCreateImage(env: &mut Environment, context: CGContextRef) 
     let host_obj = env.objc.borrow::<CGContextHostObject>(context);
     let CGContextSubclass::CGBitmapContext(bitmap_data) = host_obj.subclass;
 
-    if bitmap_data.bits_per_component != 8 {
+    if bitmap_data.bits_per_component != 8 && bitmap_data.bits_per_component != 5 {
         log!("Warning: CGBitmapContextCreateImage called with bits_per_component = {}, which is not fully supported yet.", bitmap_data.bits_per_component);
     }
 
@@ -159,6 +159,31 @@ pub fn CGBitmapContextCreateImage(env: &mut Environment, context: CGContextRef) 
 
     let mut normalized_pixels =
         Vec::with_capacity((bitmap_data.width * bitmap_data.height * 4) as usize);
+
+    if bitmap_data.bits_per_component == 5 {
+        // 16-bit-per-pixel packed RGB555.
+        for y in 0..bitmap_data.height {
+            let row_start = (y * bitmap_data.bytes_per_row) as usize;
+            for x in 0..bitmap_data.width {
+                let pixel_start = row_start + (x as usize * bpp);
+                if pixel_start + bpp > raw_pixels.len() {
+                    normalized_pixels.extend_from_slice(&[0, 0, 0, 255]);
+                    continue;
+                }
+                let word =
+                    u16::from_le_bytes([raw_pixels[pixel_start], raw_pixels[pixel_start + 1]]);
+                let (r, g, b) = unpack_rgb555(word);
+                normalized_pixels.push(r);
+                normalized_pixels.push(g);
+                normalized_pixels.push(b);
+                normalized_pixels.push(255);
+            }
+        }
+        return cg_image::from_image(
+            env,
+            Image::from_pixel_vec(normalized_pixels, (bitmap_data.width, bitmap_data.height)),
+        );
+    }
 
     let (r_offset, g_offset, b_offset, a_offset) = pixel_offsets(&bitmap_data);
 
@@ -248,10 +273,19 @@ fn bytes_per_pixel(data: &CGBitmapContextData) -> GuestUSize {
         alpha_info,
         ..
     } = data;
+    // `bits_per_component == 5` is the classic 16-bit-per-pixel packed RGB555
+    // format (5 bits per channel, top bit unused/skip-alpha). CoreGraphics
+    // only ever uses 5 bits per component for this exact packed layout, so
+    // we can identify and handle it directly rather than falling back to an
+    // (incorrect) 8-bit-per-component interpretation.
+    if bits_per_component == 5 {
+        return 2;
+    }
     if bits_per_component != 8 {
-        // We don't currently support 16-bit-per-component or float bitmap
-        // contexts. Clamp to the 8-bit interpretation so callers don't crash
-        // outright; rendering may look wrong but the host stays alive.
+        // We don't currently support other non-8-bit-per-component (e.g.
+        // 16-bit-per-component or float) bitmap contexts. Clamp to the 8-bit
+        // interpretation so callers don't crash outright; rendering may look
+        // wrong but the host stays alive.
         log!(
             "Warning: CGBitmapContext: unsupported bitsPerComponent {} (expected 8); \
              treating as 8.",
@@ -263,6 +297,27 @@ fn bytes_per_pixel(data: &CGBitmapContextData) -> GuestUSize {
         kCGColorSpaceGenericGray => components_for_gray(alpha_info).unwrap_or(1),
         _ => components_for_rgb(alpha_info).unwrap_or(4),
     }
+}
+
+/// Unpacks a 16-bit RGB555 pixel (5 bits per channel, top bit unused) into
+/// 8-bit-per-channel `(r, g, b)`, expanding each 5-bit value to 8 bits.
+fn unpack_rgb555(word: u16) -> (u8, u8, u8) {
+    let r5 = ((word >> 10) & 0x1f) as u8;
+    let g5 = ((word >> 5) & 0x1f) as u8;
+    let b5 = (word & 0x1f) as u8;
+    // Expand 5-bit -> 8-bit by replicating the top bits into the low bits
+    // (standard "bit replication" scaling used for e.g. RGB555/RGB565).
+    let expand5 = |v: u8| (v << 3) | (v >> 2);
+    (expand5(r5), expand5(g5), expand5(b5))
+}
+
+/// Packs 8-bit-per-channel `(r, g, b)` into a 16-bit RGB555 pixel (top bit
+/// left as 0).
+fn pack_rgb555(r: u8, g: u8, b: u8) -> u16 {
+    let r5 = (r >> 3) as u16;
+    let g5 = (g >> 3) as u16;
+    let b5 = (b >> 3) as u16;
+    (r5 << 10) | (g5 << 5) | b5
 }
 
 fn get_pixels<'a>(data: &CGBitmapContextData, mem: &'a mut Mem) -> &'a mut [u8] {
@@ -330,6 +385,17 @@ fn get_pixel(
     pixels: &mut [u8],
     first_component_idx: usize,
 ) -> (f32, f32, f32, f32) {
+    if data.bits_per_component == 5 {
+        let word =
+            u16::from_le_bytes([pixels[first_component_idx], pixels[first_component_idx + 1]]);
+        let (r, g, b) = unpack_rgb555(word);
+        return (
+            gamma_decode(r as f32 / 255.0),
+            gamma_decode(g as f32 / 255.0),
+            gamma_decode(b as f32 / 255.0),
+            1.0,
+        );
+    }
     let pixel_offset = pixel_offsets(data);
     let pixel = (
         pixels[first_component_idx + pixel_offset.0] as f32 / 255.0,
@@ -383,6 +449,15 @@ fn put_pixel(
         pixel
     };
     let (r, g, b) = (gamma_encode(r), gamma_encode(g), gamma_encode(b));
+
+    if data.bits_per_component == 5 {
+        let word = pack_rgb555((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
+        let bytes = word.to_le_bytes();
+        pixels[first_component_idx] = bytes[0];
+        pixels[first_component_idx + 1] = bytes[1];
+        return;
+    }
+
     let pixel_offset = pixel_offsets(data);
     match data.alpha_info {
         kCGImageAlphaOnly => {
