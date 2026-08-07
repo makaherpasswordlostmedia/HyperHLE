@@ -300,6 +300,18 @@ fn pthread_attr_setschedpolicy(
     0
 }
 
+fn pthread_attr_getschedpolicy(
+    env: &mut Environment,
+    attr: MutPtr<pthread_attr_t>,
+    policy_ptr: MutPtr<i32>,
+) -> i32 {
+    check_magic!(env, attr, MAGIC_ATTR);
+    let policy = env.mem.read(attr).sched_policy;
+    env.mem.write(policy_ptr, policy);
+    log_dbg!("pthread_attr_getschedpolicy({:?}) => {}", attr, policy);
+    0
+}
+
 fn pthread_attr_setschedparam(
     env: &mut Environment,
     attr: MutPtr<pthread_attr_t>,
@@ -315,6 +327,23 @@ fn pthread_attr_setschedparam(
     env.mem.write(attr, attr_copy);
 
     log_dbg!("pthread_attr_setschedparam({:?}, {:?})", attr, new_param);
+    0
+}
+
+/// `int pthread_attr_getschedparam(const pthread_attr_t *attr,
+///                                  struct sched_param *param)` —
+/// Reads back the scheduling parameters previously stored via
+/// [pthread_attr_setschedparam] (or the POSIX-default `sched_priority = 0`
+/// if none were ever set).
+fn pthread_attr_getschedparam(
+    env: &mut Environment,
+    attr: MutPtr<pthread_attr_t>,
+    param: MutPtr<sched_param>,
+) -> i32 {
+    check_magic!(env, attr, MAGIC_ATTR);
+    let sched_param = env.mem.read(attr).sched_param;
+    env.mem.write(param, sched_param);
+    log_dbg!("pthread_attr_getschedparam({:?}) => {:?}", attr, sched_param);
     0
 }
 
@@ -790,7 +819,9 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(pthread_attr_setinheritsched(_, _)),
     export_c_func!(pthread_attr_getinheritsched(_, _)),
     export_c_func!(pthread_attr_setschedpolicy(_, _)),
+    export_c_func!(pthread_attr_getschedpolicy(_, _)),
     export_c_func!(pthread_attr_setschedparam(_, _)),
+    export_c_func!(pthread_attr_getschedparam(_, _)),
     export_c_func!(pthread_attr_setscope(_, _)),
     export_c_func!(pthread_attr_destroy(_)),
     // Lifecycle
