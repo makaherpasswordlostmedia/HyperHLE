@@ -14,7 +14,7 @@ use crate::libc::sysctl::SysInfoType::String;
 use crate::mem::{guest_size_of, ConstPtr, GuestUSize, MutPtr, MutVoidPtr, PAGE_SIZE};
 use crate::Environment;
 
-static SYSCTL_VALUES: [((i32, i32), &str, SysInfoType); 29] = [
+static SYSCTL_VALUES: [((i32, i32), &str, SysInfoType); 30] = [
     // Generic CPU, I/O
     ((6,1), "hw.machine" , String(b"iPhone1,1")), // overridden dynamically below
     ((6,2), "hw.model" , String(b"M68AP")),
@@ -40,6 +40,11 @@ static SYSCTL_VALUES: [((i32, i32), &str, SysInfoType); 29] = [
     ((0,0), "hw.l1dcachesize", SysInfoType::Int32(16384)),
     ((0,0), "hw.l2cachesize", SysInfoType::Int32(0)),
     ((0,0), "hw.l3cachesize", SysInfoType::Int32(0)),
+
+    // hw.machinearch (CTL_HW=6, HW_MACHINE_ARCH=12): machine architecture
+    // string. Real iOS devices of this era report "arm". Some apps probe
+    // this alongside hw.machine/hw.cputype when picking codepaths.
+    ((6,12), "hw.machinearch", String(b"arm")),
 
     ((1, 14), "kern.osversion", String(b"10B141")),
     ((6,5), "hw.physmem" , SysInfoType::Int32(536870912)),
