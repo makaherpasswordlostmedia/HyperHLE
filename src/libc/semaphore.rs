@@ -10,6 +10,7 @@ use crate::libc::errno::set_errno;
 use crate::libc::posix_io::stat::mode_t;
 use crate::libc::posix_io::{O_CREAT, O_EXCL};
 use crate::mem::{ConstPtr, MutPtr, SafeRead};
+use crate::abi::GuestArg;
 use crate::{Environment, ThreadId};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -36,6 +37,25 @@ pub struct mach_timespec_t {
     pub tv_nsec: u32,
 }
 unsafe impl SafeRead for mach_timespec_t {}
+
+// mach_timespec_t is passed by value in AAPCS as two consecutive u32 words
+// (tv_sec, then tv_nsec), the same shape as any other two-word POD struct
+// (compare to how u64 occupies two registers in abi.rs). There's no derive
+// for this, so it's implemented by hand here rather than in abi.rs, mirroring
+// how other small structs (CGSize, CGPoint, etc.) are done per-module.
+impl GuestArg for mach_timespec_t {
+    const REG_COUNT: usize = 2;
+    fn from_regs(regs: &[u32]) -> Self {
+        mach_timespec_t {
+            tv_sec: regs[0],
+            tv_nsec: regs[1],
+        }
+    }
+    fn to_regs(self, regs: &mut [u32]) {
+        regs[0] = self.tv_sec;
+        regs[1] = self.tv_nsec;
+    }
+}
 
 // SEM_FAILED is defined as -1 while having a type of sem_t *
 pub const SEM_FAILED: MutPtr<sem_t> = MutPtr::from_bits(u32::MAX);
