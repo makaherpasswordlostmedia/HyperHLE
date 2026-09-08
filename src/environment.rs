@@ -22,7 +22,7 @@ use crate::{
     window,
 };
 use std::cell::Cell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::TcpListener;
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
@@ -105,6 +105,12 @@ pub struct Environment {
     pub cpu: NullableBox<cpu::Cpu>,
     pub current_thread: ThreadId,
     pub threads: Vec<Thread>,
+    /// Set of (thread, semaphore) pairs that most recently woke up from
+    /// [ThreadBlock::Semaphore] due to hitting their deadline rather than
+    /// the semaphore being decremented for them. Consumed (removed) by
+    /// [Environment::sem_decrement_timed] right after the thread resumes,
+    /// so this should never grow unbounded.
+    timed_out_semaphores: HashSet<(ThreadId, MutPtr<sem_t>)>,
     pub libc_state: NullableBox<libc::State>,
     pub framework_state: NullableBox<frameworks::State>,
     pub mutex_state: NullableBox<mutex::MutexState>,
@@ -143,8 +149,11 @@ pub enum ThreadBlock {
     Sleeping(Instant),
     // Thread is waiting for a mutex to unlock.
     Mutex(MutexId),
-    // Thread is waiting on a semaphore.
-    Semaphore(MutPtr<sem_t>),
+    // Thread is waiting on a semaphore. The optional field is an absolute
+    // deadline as an [Instant] (matching how ThreadBlock::Sleeping stores
+    // its deadline), used by semaphore_timedwait. `None` means wait
+    // forever (sem_wait).
+    Semaphore(MutPtr<sem_t>, Option<Instant>),
     // Thread is waiting on a condition variable
     Condition(MutPtr<pthread_cond_t>, Option<Duration>),
     // Thread is waiting for another thread to finish (joining).
@@ -666,6 +675,7 @@ impl Environment {
             cpu: NullableBox::new(cpu),
             current_thread: 0,
             threads: vec![main_thread],
+            timed_out_semaphores: HashSet::new(),
             libc_state: Default::default(),
             mutex_state: Default::default(),
             framework_state: Default::default(),
@@ -813,6 +823,7 @@ impl Environment {
             cpu: NullableBox::new(cpu),
             current_thread: 0,
             threads: vec![main_thread],
+            timed_out_semaphores: HashSet::new(),
             libc_state: Default::default(),
             mutex_state: Default::default(),
             framework_state: Default::default(),
@@ -874,6 +885,7 @@ impl Environment {
             cpu: NullableBox::null(),
             current_thread: 0,
             threads: Vec::new(),
+            timed_out_semaphores: HashSet::new(),
             libc_state: NullableBox::null(),
             framework_state: NullableBox::null(),
             mutex_state: NullableBox::null(),
@@ -1259,8 +1271,54 @@ impl Environment {
         host_sem.waiting.insert(self.current_thread);
         std::mem::drop(host_sem);
         // The scheduler will decrement the semaphore value when it unblocks.
-        self.yield_thread(ThreadBlock::Semaphore(sem));
+        self.yield_thread(ThreadBlock::Semaphore(sem, None));
         true
+    }
+
+    /// Like [Self::sem_decrement], but with an absolute deadline (as an
+    /// [Instant]) after which the wait gives up. Returns `true` if the
+    /// semaphore was successfully decremented, `false` if the deadline was
+    /// reached first.
+    ///
+    /// Used by `semaphore_timedwait`. Mirrors the timeout handling already
+    /// used by [ThreadBlock::Condition], but keyed on [Instant] (like
+    /// [ThreadBlock::Sleeping]) since semaphore waits don't have an
+    /// existing epoch-based deadline representation to reuse.
+    pub fn sem_decrement_timed(&mut self, sem: MutPtr<sem_t>, deadline: Instant) -> bool {
+        let host_sem_rc: &mut _ = self
+            .libc_state
+            .semaphore
+            .open_semaphores
+            .get_mut(&sem)
+            .unwrap();
+        let mut host_sem = (*host_sem_rc).borrow_mut();
+
+        if host_sem.value > 0 {
+            log_dbg!(
+                "sem_decrement_timed: semaphore {:?} is now {}",
+                sem,
+                host_sem.value
+            );
+            host_sem.value -= 1;
+            return true;
+        }
+
+        log_dbg!(
+            "Thread {} is blocking on semaphore {:?} with a deadline of {:?}",
+            self.current_thread,
+            sem,
+            deadline
+        );
+        host_sem.waiting.insert(self.current_thread);
+        std::mem::drop(host_sem);
+        self.yield_thread(ThreadBlock::Semaphore(sem, Some(deadline)));
+
+        // yield_thread only returns once we're unblocked. schedule_next_thread
+        // records an explicit (thread, sem) marker in timed_out_semaphores
+        // if it woke us up due to the deadline rather than a real post, so
+        // we just consume that marker here to learn which happened.
+        let timed_out = self.timed_out_semaphores.remove(&(self.current_thread, sem));
+        !timed_out
     }
 
     /// Unlock a semaphore (increments value of a semaphore).
@@ -2000,7 +2058,7 @@ impl Environment {
                             return thread_id;
                         }
                     }
-                    ThreadBlock::Semaphore(sem) => {
+                    ThreadBlock::Semaphore(sem, deadline) => {
                         let host_sem_rc: &mut _ = self
                             .libc_state
                             .semaphore
@@ -2016,9 +2074,36 @@ impl Environment {
                                 host_sem.value
                             );
                             host_sem.value -= 1;
-                            host_sem.waiting.remove(&self.current_thread);
+                            host_sem.waiting.remove(&thread_id);
+                            std::mem::drop(host_sem);
                             self.threads[thread_id].blocked_by = ThreadBlock::NotBlocked;
                             return thread_id;
+                        }
+                        std::mem::drop(host_sem);
+                        if let Some(deadline) = deadline {
+                            let now = Instant::now();
+                            if deadline <= now {
+                                log_dbg!(
+                                    "Thread {} timed out waiting on semaphore {:?}.",
+                                    thread_id,
+                                    sem
+                                );
+                                let host_sem_rc: &mut _ = self
+                                    .libc_state
+                                    .semaphore
+                                    .open_semaphores
+                                    .get_mut(&sem)
+                                    .unwrap();
+                                host_sem_rc.borrow_mut().waiting.remove(&thread_id);
+                                self.timed_out_semaphores.insert((thread_id, sem));
+                                self.threads[thread_id].blocked_by = ThreadBlock::NotBlocked;
+                                return thread_id;
+                            } else {
+                                next_awakening = match next_awakening {
+                                    None => Some(deadline),
+                                    Some(other) => Some(other.min(deadline)),
+                                };
+                            }
                         }
                     }
                     ThreadBlock::Condition(cond, deadline) => {
