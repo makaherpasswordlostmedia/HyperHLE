@@ -9,13 +9,33 @@ use crate::dyld::{export_c_func, FunctionExports};
 use crate::libc::errno::set_errno;
 use crate::libc::posix_io::stat::mode_t;
 use crate::libc::posix_io::{O_CREAT, O_EXCL};
-use crate::mem::{ConstPtr, MutPtr};
+use crate::mem::{ConstPtr, MutPtr, SafeRead};
 use crate::{Environment, ThreadId};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::errno::EINVAL;
+
+// Mach kernel return codes (from <mach/kern_return.h>). Only the ones
+// relevant to semaphore_timedwait are needed here.
+pub type kern_return_t = i32;
+pub const KERN_SUCCESS: kern_return_t = 0;
+pub const KERN_OPERATION_TIMED_OUT: kern_return_t = 49;
+pub const KERN_INVALID_ARGUMENT: kern_return_t = 4;
+
+/// `mach_timespec_t` from `<mach/mach_time.h>`. Distinct from POSIX
+/// `struct timespec`: both fields are unsigned 32-bit, and the field order
+/// is the same (seconds, then nanoseconds).
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C, packed)]
+pub struct mach_timespec_t {
+    pub tv_sec: u32,
+    pub tv_nsec: u32,
+}
+unsafe impl SafeRead for mach_timespec_t {}
 
 // SEM_FAILED is defined as -1 while having a type of sem_t *
 pub const SEM_FAILED: MutPtr<sem_t> = MutPtr::from_bits(u32::MAX);
@@ -152,6 +172,64 @@ fn sem_trywait(env: &mut Environment, sem: MutPtr<sem_t>) -> i32 {
     }
 }
 
+/// `semaphore_timedwait` from `<mach/semaphore.h>`.
+///
+/// This is a Mach kernel primitive, distinct from POSIX `sem_wait`/
+/// `sem_timedwait`: it takes a `mach_timespec_t` (absolute deadline, wall
+/// clock) rather than a relative `struct timespec`, and it returns a
+/// `kern_return_t` (`KERN_SUCCESS` / `KERN_OPERATION_TIMED_OUT` /
+/// `KERN_INVALID_ARGUMENT`) rather than the POSIX `0`/`-1` + `errno`
+/// convention.
+///
+/// touchHLE does not currently distinguish Mach semaphore ports from POSIX
+/// `sem_t*` handles: both are represented as a `MutPtr<sem_t>` key into
+/// `open_semaphores`, so the same decrement/blocking machinery is reused
+/// here.
+pub fn semaphore_timedwait(
+    env: &mut Environment,
+    sem: MutPtr<sem_t>,
+    wait_time: mach_timespec_t,
+) -> kern_return_t {
+    if !env
+        .libc_state
+        .semaphore
+        .open_semaphores
+        .contains_key(&sem)
+    {
+        return KERN_INVALID_ARGUMENT;
+    }
+
+    // Fast path: already available, no need to touch the scheduler's
+    // timeout bookkeeping at all.
+    if env.sem_decrement(sem, false) {
+        return KERN_SUCCESS;
+    }
+
+    // `wait_time` is a wall-clock absolute deadline (seconds/nanoseconds
+    // since the UNIX epoch), matching how Apple's semaphore_timedwait is
+    // documented: the caller typically computes it from the current time
+    // plus some relative offset before calling in. touchHLE's scheduler
+    // works in terms of [Instant], so convert by measuring the deadline's
+    // offset from "now" in both clocks.
+    let deadline_since_epoch = Duration::new(wait_time.tv_sec as u64, wait_time.tv_nsec);
+    let now_since_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let deadline_instant = if deadline_since_epoch > now_since_epoch {
+        Instant::now() + (deadline_since_epoch - now_since_epoch)
+    } else {
+        // Deadline is already in the past (or equal to now): expire
+        // immediately rather than underflowing the subtraction.
+        Instant::now()
+    };
+
+    if env.sem_decrement_timed(sem, deadline_instant) {
+        KERN_SUCCESS
+    } else {
+        KERN_OPERATION_TIMED_OUT
+    }
+}
+
 pub fn sem_close(env: &mut Environment, sem: MutPtr<sem_t>) -> i32 {
     // TODO: handle errno properly
     set_errno(env, 0);
@@ -199,4 +277,5 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(sem_trywait(_)),
     export_c_func!(sem_close(_)),
     export_c_func!(sem_unlink(_)),
+    export_c_func!(semaphore_timedwait(_, _)),
 ];
