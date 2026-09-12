@@ -23,8 +23,57 @@ use crate::frameworks::uikit;
 use crate::mem::{ConstPtr, GuestUSize};
 use crate::objc::{objc_classes, ClassExports, HostObject};
 use crate::Environment;
+use std::rc::Rc;
 
 type CGInterpolationQuality = i32;
+
+/// A rasterized clip mask covering the entire backing store of a bitmap
+/// context, in the same device-pixel space used by
+/// `CGBitmapContextDrawer::put_pixel` (row 0 = top of the image, matching
+/// how `put_pixel` flips `y` before indexing).
+///
+/// `alpha[y * width + x]` is the clip coverage (0 = fully clipped out, 255 =
+/// fully visible) at device pixel `(x, y)`. Wrapped in `Rc` so that
+/// `CGContextSaveGState`/`RestoreGState` can cheaply snapshot/restore it
+/// without copying the whole buffer on every save.
+pub(super) struct ClipMask {
+    pub(super) width: GuestUSize,
+    pub(super) height: GuestUSize,
+    pub(super) alpha: Vec<u8>,
+}
+impl ClipMask {
+    /// Coverage at device pixel `(x, y)`, in top-left-origin device space
+    /// (matching `put_pixel`'s indexing after its own `y` flip). Points
+    /// outside the mask bounds are fully clipped.
+    pub(super) fn sample(&self, x: i32, y: i32) -> u8 {
+        if x < 0 || y < 0 {
+            return 0;
+        }
+        let (x, y) = (x as GuestUSize, y as GuestUSize);
+        if x >= self.width || y >= self.height {
+            return 0;
+        }
+        self.alpha[(y * self.width + x) as usize]
+    }
+
+    /// Intersects this mask with `other` (Quartz clips accumulate by
+    /// intersection, not replacement), producing a new mask.
+    pub(super) fn intersect(&self, other: &ClipMask) -> ClipMask {
+        debug_assert_eq!(self.width, other.width);
+        debug_assert_eq!(self.height, other.height);
+        let alpha = self
+            .alpha
+            .iter()
+            .zip(other.alpha.iter())
+            .map(|(&a, &b)| ((a as u16 * b as u16) / 255) as u8)
+            .collect();
+        ClipMask {
+            width: self.width,
+            height: self.height,
+            alpha,
+        }
+    }
+}
 
 pub const CLASSES: ClassExports = objc_classes! {
 
@@ -80,6 +129,12 @@ pub(super) struct CGContextHostObject {
     /// Current shadow state: (offset_x, offset_y, blur, color_rgba). When
     /// blur is zero, no shadow is drawn (matching Apple's CGContext docs).
     pub(super) shadow: CGShadowState,
+    /// Current clip mask, if any clipping has been applied. `None` means
+    /// "no clipping" (the whole context is visible), matching Quartz's
+    /// default state. Set by `CGContextClipToMask` (and intersected with
+    /// any prior clip). Saved/restored by `CGContextSaveGState`/
+    /// `RestoreGState`.
+    pub(super) clip_mask: Option<Rc<ClipMask>>,
 }
 
 /// State for shadow operations. Stored verbatim on the host object so that
@@ -126,6 +181,7 @@ pub(super) struct CGContextState {
     pub font_size: CGFloat,
     pub rendering_intent: i32,
     pub shadow: CGShadowState,
+    pub clip_mask: Option<Rc<ClipMask>>,
 }
 
 pub(super) enum CGContextSubclass {
@@ -855,13 +911,33 @@ fn CGContextResetClip(_env: &mut Environment, _context: CGContextRef) {
     log_dbg!("CGContextResetClip: stubbed");
 }
 
-fn CGContextClipToMask(
-    _env: &mut Environment,
-    _context: CGContextRef,
-    _rect: CGRect,
-    _mask: CGImageRef,
+/// Intersects the context's current clip region with the alpha coverage of
+/// `mask`, mapped into `rect` (transformed by the current CTM), per Apple's
+/// `CGContextClipToMask` semantics: the mask's alpha channel determines
+/// per-pixel visibility for all subsequent drawing, and repeated calls
+/// (like all clip operations) intersect rather than replace.
+///
+/// `mask` is retained for the duration of this call only — we rasterize its
+/// alpha into our own buffer immediately rather than holding a reference to
+/// the `CGImageRef`, so the caller remains free to release it afterward
+/// (matching the real CGContextClipToMask, which does not take ownership).
+pub fn CGContextClipToMask(
+    env: &mut Environment,
+    context: CGContextRef,
+    rect: CGRect,
+    mask: CGImageRef,
 ) {
-    log!("CGContextClipToMask: stubbed");
+    if context.is_null() || mask.is_null() {
+        return;
+    }
+
+    let new_mask = cg_bitmap_context::rasterize_clip_mask(env, context, rect, mask);
+
+    let host = env.objc.borrow_mut::<CGContextHostObject>(context);
+    host.clip_mask = Some(Rc::new(match host.clip_mask.take() {
+        Some(existing) => existing.intersect(&new_mask),
+        None => new_mask,
+    }));
 }
 
 fn CGContextSetGrayFillColor(
@@ -1110,6 +1186,7 @@ pub fn CGContextSaveGState(env: &mut Environment, context: CGContextRef) {
         font_size: h.font_size,
         rendering_intent: h.rendering_intent,
         shadow: h.shadow,
+        clip_mask: h.clip_mask.clone(),
     };
     env.objc
         .borrow_mut::<CGContextHostObject>(context)
@@ -1150,6 +1227,7 @@ pub fn CGContextRestoreGState(env: &mut Environment, context: CGContextRef) {
         host.font_size = state.font_size;
         host.rendering_intent = state.rendering_intent;
         host.shadow = state.shadow;
+        host.clip_mask = state.clip_mask;
     } else {
         log!("Warning: CGContextRestoreGState: stack underflow");
     }

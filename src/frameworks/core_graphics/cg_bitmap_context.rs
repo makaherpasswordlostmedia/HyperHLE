@@ -10,7 +10,7 @@ use super::cg_affine_transform::{CGAffineTransform, CGAffineTransformIdentity};
 use super::cg_color_space::{
     kCGColorSpaceGenericGray, kCGColorSpaceGenericRGB, CGColorSpaceHostObject, CGColorSpaceRef,
 };
-use super::cg_context::{CGContextHostObject, CGContextRef, CGContextSubclass};
+use super::cg_context::{CGContextHostObject, CGContextRef, CGContextSubclass, ClipMask};
 use super::cg_image::{
     self, kCGBitmapAlphaInfoMask, kCGBitmapByteOrderMask, kCGImageAlphaFirst, kCGImageAlphaLast,
     kCGImageAlphaNone, kCGImageAlphaNoneSkipFirst, kCGImageAlphaNoneSkipLast, kCGImageAlphaOnly,
@@ -23,6 +23,7 @@ use crate::image::{gamma_decode, gamma_encode, Image};
 use crate::mem::{GuestUSize, Mem, MutVoidPtr};
 use crate::objc::ObjC;
 use crate::Environment;
+use std::rc::Rc;
 
 #[derive(Copy, Clone)]
 #[derive(Default)]
@@ -111,6 +112,7 @@ pub fn CGBitmapContextCreate(
         // Apple defaults: rendering intent unspecified = `kCGRenderingIntentDefault` (0).
         rendering_intent: 0,
         shadow: crate::frameworks::core_graphics::cg_context::CGShadowState::default(),
+        clip_mask: None,
     };
 
     let isa = env
@@ -421,6 +423,7 @@ fn put_pixel(
     coords: (i32, i32),
     pixel: (CGFloat, CGFloat, CGFloat, CGFloat),
     blend: bool,
+    clip_mask: Option<&ClipMask>,
 ) {
     let (x, y) = coords;
     if x < 0 || y < 0 {
@@ -430,6 +433,26 @@ fn put_pixel(
     if x >= data.width || y >= data.height {
         return;
     }
+
+    // Apply the clip mask's coverage at this device pixel, if any. The mask
+    // is stored in the same top-left-origin device space this function
+    // computes below (post the `height - 1 - y` flip), so sample it there.
+    let (r, g, b, a) = pixel;
+    let (pixel, blend) = if let Some(mask) = clip_mask {
+        let coverage = mask.sample(x as i32, (data.height - 1 - y) as i32) as f32 / 255.0;
+        if coverage <= 0.0 {
+            // Fully clipped out: nothing to draw at this pixel.
+            return;
+        }
+        // Partial coverage has to be blended against the background even
+        // for otherwise-non-blending draws (e.g. `fill_rect`'s `clear`
+        // path), since scaling alpha down only has visible effect when
+        // composited against what's already there.
+        let force_blend = blend || coverage < 1.0;
+        ((r, g, b, a * coverage), force_blend)
+    } else {
+        ((r, g, b, a), blend)
+    };
 
     let y = data.height - 1 - y;
     let pixel_size = bytes_per_pixel(data);
@@ -479,6 +502,7 @@ pub struct CGBitmapContextDrawer<'a> {
     rgb_fill_color: (CGFloat, CGFloat, CGFloat, CGFloat),
     transform: CGAffineTransform,
     pixels: &'a mut [u8],
+    clip_mask: Option<Rc<ClipMask>>,
 }
 impl CGBitmapContextDrawer<'_> {
     pub fn new<'a>(
@@ -490,8 +514,10 @@ impl CGBitmapContextDrawer<'_> {
             subclass: CGContextSubclass::CGBitmapContext(bitmap_info),
             rgb_fill_color,
             transform,
+            ref clip_mask,
             ..
         } = objc.borrow(context);
+        let clip_mask = clip_mask.clone();
         let pixels = get_pixels(&bitmap_info, mem);
 
         CGBitmapContextDrawer {
@@ -499,6 +525,7 @@ impl CGBitmapContextDrawer<'_> {
             rgb_fill_color,
             transform,
             pixels,
+            clip_mask,
         }
     }
 
@@ -528,7 +555,14 @@ impl CGBitmapContextDrawer<'_> {
         color: (CGFloat, CGFloat, CGFloat, CGFloat),
         blend: bool,
     ) {
-        put_pixel(&self.bitmap_info, self.pixels, coords, color, blend)
+        put_pixel(
+            &self.bitmap_info,
+            self.pixels,
+            coords,
+            color,
+            blend,
+            self.clip_mask.as_deref(),
+        )
     }
 
     pub fn iter_transformed_pixels(
@@ -575,6 +609,63 @@ pub(super) fn fill_rect(env: &mut Environment, context: CGContextRef, rect: CGRe
     };
     for ((x, y), _) in drawer.iter_transformed_pixels(rect) {
         drawer.put_pixel((x, y), color, !clear)
+    }
+}
+
+/// Rasterizes `mask`'s alpha channel into a full-context-sized coverage
+/// buffer, positioned/scaled by `rect` and the context's current transform
+/// (the same mapping `draw_image` uses to place image content). Pixels
+/// outside `rect`'s transformed bounds get zero coverage, matching Quartz's
+/// clip-to-mask semantics (anything outside the mask rect is clipped out).
+///
+/// Used by `CGContextClipToMask`; kept here (rather than in `cg_context`)
+/// since it needs `CGBitmapContextDrawer`'s private transform/iteration
+/// logic.
+pub(super) fn rasterize_clip_mask(
+    env: &mut Environment,
+    context: CGContextRef,
+    rect: CGRect,
+    mask: CGImageRef,
+) -> ClipMask {
+    let image = cg_image::borrow_image(&env.objc, mask);
+    let (image_width, image_height) = image.dimensions();
+    // We only need geometry (width/height/transform) here, not the pixel
+    // buffer `CGBitmapContextDrawer` also grabs — but it already knows how
+    // to compute the transformed pixel range for `rect` via
+    // `iter_transformed_pixels`, so reuse that instead of duplicating the
+    // transform math. The unused mutable pixel borrow is harmless: we never
+    // call `drawer.put_pixel`, so the backing store is left untouched.
+    let drawer = CGBitmapContextDrawer::new(&env.objc, &mut env.mem, context);
+    let (width, height) = (drawer.width(), drawer.height());
+    let mut alpha = vec![0u8; (width * height) as usize];
+
+    for ((x, y), (texel_x, texel_y)) in drawer.iter_transformed_pixels(rect) {
+        let texel_x = (image_width as f32 * texel_x) as i32;
+        // Same image-to-texel mapping `draw_image` uses, so a clip mask
+        // lines up with an equivalent drawn image.
+        let texel_y = (image_height as f32 * (1.0 - texel_y)) as i32;
+        let coverage = match image.get_pixel((texel_x, texel_y)) {
+            // CGImageMask alpha is what determines coverage; RGB is
+            // irrelevant for a mask image.
+            Some((_, _, _, a)) => (a.clamp(0.0, 1.0) * 255.0) as u8,
+            None => 0,
+        };
+        if x >= 0 && y >= 0 {
+            let (x, y) = (x as GuestUSize, y as GuestUSize);
+            if x < width && y < height {
+                // `put_pixel` samples the mask with `y` already flipped to
+                // top-left-origin device space (`data.height - 1 - y`), so
+                // store coverage under that same flipped `y` here to match.
+                let flipped_y = height - 1 - y;
+                alpha[(flipped_y * width + x) as usize] = coverage;
+            }
+        }
+    }
+
+    ClipMask {
+        width,
+        height,
+        alpha,
     }
 }
 
