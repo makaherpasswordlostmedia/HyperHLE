@@ -1016,6 +1016,52 @@ impl Fs {
         }
     }
 
+    pub fn created(&self, path: &GuestPath) -> Result<i64, ()> {
+        // TODO: error handling
+        let node = self.lookup_node(path).ok_or(())?;
+        match node {
+            FsNode::File { location, .. } => match location {
+                // Zip/IPA entries only carry a single "last modified" field,
+                // there's no separate creation timestamp in the format, so
+                // we fall back to that value (same as unzip/7-zip would show
+                // as both dates for such files).
+                FileLocation::IpaFileRef(ipa_file_ref) => {
+                    Ok(ipa_file_ref.get_last_modified().into())
+                }
+                FileLocation::Path(path) => {
+                    // TODO: account for the current timezone, here it's in GMT
+                    fs::metadata(path)
+                        .and_then(|m| m.created())
+                        .map(|t| {
+                            t.duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs()
+                                .try_into()
+                                .unwrap()
+                        })
+                        .map_err(|_| ())
+                }
+                FileLocation::ResourceFilePath(_) => Ok(0),
+            },
+            FsNode::Directory { writeable, .. } => {
+                if let Some(host_path) = writeable {
+                    fs::metadata(host_path)
+                        .and_then(|m| m.created())
+                        .map(|t| {
+                            t.duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs()
+                                .try_into()
+                                .unwrap()
+                        })
+                        .map_err(|_| ())
+                } else {
+                    Ok(0)
+                }
+            }
+        }
+    }
+
     pub fn size(&self, path: &GuestPath) -> Result<u64, ()> {
         // TODO: error handling
         let node = self.lookup_node(path).ok_or(())?;
