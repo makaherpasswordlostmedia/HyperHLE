@@ -1045,6 +1045,20 @@ pub const CLASSES: ClassExports = objc_classes! {
     let perms_key = get_static_str(env, NSFilePosixPermissions);
     () = msg![env; dict setObject:perms_num forKey:perms_key];
 
+    // Real timestamps pulled from the guest fs / underlying host file,
+    // not placeholders: `Fs::modified`/`Fs::created` read actual metadata
+    // (or the IPA entry's single timestamp when there's no host file).
+    if let Ok(modified_secs) = env.fs.modified(guest_path) {
+        let modified_date: id = msg_class![env; NSDate dateWithTimeIntervalSince1970:(modified_secs as f64)];
+        let modified_key = get_static_str(env, NSFileModificationDate);
+        () = msg![env; dict setObject:modified_date forKey:modified_key];
+    }
+    if let Ok(created_secs) = env.fs.created(guest_path) {
+        let created_date: id = msg_class![env; NSDate dateWithTimeIntervalSince1970:(created_secs as f64)];
+        let created_key = get_static_str(env, NSFileCreationDate);
+        () = msg![env; dict setObject:created_date forKey:created_key];
+    }
+
     let dict_imm = msg![env; dict copy];
     autorelease(env, dict_imm)
 }

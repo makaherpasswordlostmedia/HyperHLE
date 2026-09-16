@@ -20,7 +20,7 @@ use crate::frameworks::foundation::ns_enumerator::{
     fast_enumeration_helper, NSFastEnumerationState,
 };
 use crate::frameworks::foundation::ns_file_manager::{
-    NSFileModificationDate, NSFileSize, NSFileType,
+    NSFileCreationDate, NSFileModificationDate, NSFileSize, NSFileType,
 };
 use crate::fs::GuestPath;
 use crate::libc::stdlib::qsort::qsort_generic;
@@ -618,6 +618,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)fileModificationDate {
     let modif_date_key = get_static_str(env, NSFileModificationDate);
     msg![env; this objectForKey:modif_date_key]
+}
+- (id)fileCreationDate {
+    let creation_date_key = get_static_str(env, NSFileCreationDate);
+    msg![env; this objectForKey:creation_date_key]
 }
 - (u64)fileSize {
     let size_key = get_static_str(env, NSFileSize);
