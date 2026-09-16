@@ -128,6 +128,11 @@ pub(crate) struct UIViewHostObject {
     accessibility_view_is_modal: bool,
     /// `BOOL shouldGroupAccessibilityChildren` (iOS 6+); default `NO`.
     should_group_accessibility_children: bool,
+    /// `UIColor *tintColor` (strong, not copy). `nil` means "inherit from
+    /// superview", matching Apple's documented resolution: reading
+    /// `tintColor` on a view with none set walks up to the nearest
+    /// ancestor that has one, defaulting to the system blue if none do.
+    tint_color: id,
 }
 impl HostObject for UIViewHostObject {}
 impl Default for UIViewHostObject {
@@ -161,6 +166,7 @@ impl Default for UIViewHostObject {
             accessibility_elements_hidden: false,
             accessibility_view_is_modal: false,
             should_group_accessibility_children: false,
+            tint_color: nil,
         }
     }
 }
@@ -805,6 +811,40 @@ pub const CLASSES: ClassExports = objc_classes! {
         new_lang,
     );
     release(env, old);
+}
+
+// MARK: - Tint color
+
+// `tintColor` (UIColor*, strong): if a view has none set explicitly, it
+// inherits from its nearest ancestor that does, per Apple's documented
+// tint color propagation. If nothing up the chain has one, we fall back
+// to the system default blue rather than nil, matching real UIKit
+// (a view always has *some* resolved tintColor).
+- (id)tintColor {
+    let own = env.objc.borrow::<UIViewHostObject>(this).tint_color;
+    if own != nil {
+        return own;
+    }
+    let superview = env.objc.borrow::<UIViewHostObject>(this).superview;
+    if superview != nil {
+        return msg![env; superview tintColor];
+    }
+    // Nothing in the ancestor chain has a tint set: fall back to the
+    // system default (iOS's standard blue tint), confirmed present as
+    // `+[UIColor systemBlueColor]` in ui_color.rs.
+    msg_class![env; UIColor systemBlueColor]
+}
+- (())setTintColor:(id)color {
+    let new_color: id = if color == nil { nil } else { retain(env, color); color };
+    let old = std::mem::replace(
+        &mut env.objc.borrow_mut::<UIViewHostObject>(this).tint_color,
+        new_color,
+    );
+    release(env, old);
+    // Real UIKit posts tintColorDidChange up the subview tree; we don't
+    // implement that notification chain, but at minimum this view (and
+    // callers like UIToolbar) can react by re-drawing/re-laying-out.
+    () = msg![env; this setNeedsDisplay];
 }
 
 - (bool)accessibilityElementsHidden {
