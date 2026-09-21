@@ -151,10 +151,9 @@ const F_BARRIERFSYNC: FileControlCommand = 85;
 const F_ADDFILESIGS_RETURN: FileControlCommand = 97;
 const F_ADDFILESUPPL: FileControlCommand = 99;
 const F_NOCACHE: FileControlCommand = 48;
-const F_PEOFPOSMODE: FileControlCommand = 3;
-// used as seek whence, not fcntl cmd
-const F_VOLPOSMODE: FileControlCommand = 4;
-// same
+// F_PEOFPOSMODE (3) and F_VOLPOSMODE (4) are lseek `whence` values on Darwin,
+// not fcntl commands. They numerically collide with F_GETFL/F_SETFL, so they
+// are intentionally not defined here.
 
 /// File Descriptor flags.
 /// This alias is for readability, POSIX just uses `int`.
@@ -375,7 +374,11 @@ pub fn open_direct(env: &mut Environment, path: ConstPtr<u8>, flags: i32) -> Fil
             };
             find_or_create_fd(env, host_object)
         }
-        Err(()) => -1,
+        Err(()) => {
+            use crate::libc::errno::ENOENT;
+            set_errno(env, ENOENT);
+            -1
+        }
     };
     if res != -1 && (flags & O_SHLOCK) != 0 {
         flock(env, res, LOCK_SH);
@@ -487,7 +490,10 @@ pub fn pread(
 
     let bytes_read = read(env, fd, buffer, size);
 
-    assert!(lseek(env, fd, original_position, SEEK_SET) != -1);
+    if lseek(env, fd, original_position, SEEK_SET) == -1 {
+        log!("Warning: pread() failed to restore file position");
+        return -1;
+    }
     bytes_read
 }
 
@@ -591,7 +597,10 @@ pub fn pwrite(
         return -1;
     }
     let bytes_written = write(env, fd, buffer, size);
-    assert!(lseek(env, fd, original_position, SEEK_SET) != -1);
+    if lseek(env, fd, original_position, SEEK_SET) == -1 {
+        log!("Warning: pwrite() failed to restore file position");
+        return -1;
+    }
     bytes_written
 }
 
@@ -778,15 +787,33 @@ pub fn close(env: &mut Environment, fd: FileDescriptor) -> i32 {
 }
 
 fn rename(env: &mut Environment, old: ConstPtr<u8>, new: ConstPtr<u8>) -> i32 {
+    use crate::libc::errno::ENOENT;
     set_errno(env, 0);
-    let old_str = env.mem.cstr_at_utf8(old).unwrap_or_default();
-    let new_str = env.mem.cstr_at_utf8(new).unwrap_or_default();
+    if old.is_null() || new.is_null() {
+        set_errno(env, EINVAL);
+        return -1;
+    }
+    // Copy into owned Strings so the borrow on `env.mem` ends before we touch
+    // `env.fs` / `set_errno`.
+    let old_str = env.mem.cstr_at_utf8(old).map(str::to_owned);
+    let new_str = env.mem.cstr_at_utf8(new).map(str::to_owned);
+    let (Ok(old_str), Ok(new_str)) = (old_str, new_str) else {
+        set_errno(env, EINVAL);
+        return -1;
+    };
+    if old_str.is_empty() || new_str.is_empty() {
+        set_errno(env, ENOENT);
+        return -1;
+    }
     let res = match env
         .fs
         .rename(GuestPath::new(&old_str), GuestPath::new(&new_str))
     {
         Ok(_) => 0,
-        Err(_) => -1,
+        Err(_) => {
+            set_errno(env, ENOENT);
+            -1
+        }
     };
     log_dbg!("rename('{}', '{}') => {}", old_str, new_str, res);
     res
@@ -878,14 +905,9 @@ fn fcntl(
     args: DotDotDot,
 ) -> i32 {
     set_errno(env, 0);
-    if fd >= NORMAL_FILENO_BASE
-        && env
-            .libc_state
-            .posix_io
-            .files
-            .get(fd_to_file_idx(fd))
-            .is_none()
-    {
+    // `files.get(idx).is_none()` only catches out-of-range indices; a closed
+    // descriptor is `Some(None)`, so use `is_fd_open` which handles both.
+    if fd >= NORMAL_FILENO_BASE && !env.libc_state.posix_io.is_fd_open(fd) {
         set_errno(env, EBADF);
         return -1;
     }
@@ -1251,13 +1273,25 @@ pub fn fsync(env: &mut Environment, fd: FileDescriptor) -> i32 {
 
 pub fn ftruncate(env: &mut Environment, fd: FileDescriptor, len: off_t) -> i32 {
     set_errno(env, 0);
+    if len < 0 {
+        set_errno(env, EINVAL);
+        return -1;
+    }
     let Some(file) = env.libc_state.posix_io.file_for_fd(fd) else {
         set_errno(env, EBADF);
         return -1;
     };
     match file.file.set_len(len as u64) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(e) => {
+            let errno = match e.kind() {
+                std::io::ErrorKind::PermissionDenied => EBADF,
+                std::io::ErrorKind::InvalidInput => EINVAL,
+                _ => EIO,
+            };
+            set_errno(env, errno);
+            -1
+        }
     }
 }
 
