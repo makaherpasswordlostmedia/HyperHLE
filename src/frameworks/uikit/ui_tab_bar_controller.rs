@@ -300,6 +300,10 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.borrow::<UITabBarControllerHostObject>(this).view_controllers
 }
 
+- (())setViewControllers:(id)vcs {
+    let _: () = msg![env; this setViewControllers:vcs animated:false];
+}
+
 - (())setViewControllers:(id)vcs animated:(bool)animated {
     let old_vcs = env.objc.borrow::<UITabBarControllerHostObject>(this).view_controllers;
     release(env, old_vcs);
