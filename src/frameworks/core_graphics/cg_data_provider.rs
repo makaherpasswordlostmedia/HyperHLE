@@ -24,6 +24,30 @@ use crate::Environment;
 
 pub type CGDataProviderRef = CFTypeRef;
 
+/// Collapses runs of repeated `/` into a single `/`, without otherwise
+/// touching the path (no `.`/`..` resolution — the guest FS layer handles
+/// that). Keeps a single leading `/` if the original path was absolute.
+fn normalize_path(path: &str) -> String {
+    let is_absolute = path.starts_with('/');
+    let mut out = String::with_capacity(path.len());
+    let mut prev_was_slash = false;
+    for c in path.chars() {
+        if c == '/' {
+            if prev_was_slash {
+                continue;
+            }
+            prev_was_slash = true;
+        } else {
+            prev_was_slash = false;
+        }
+        out.push(c);
+    }
+    if is_absolute && !out.starts_with('/') {
+        out.insert(0, '/');
+    }
+    out
+}
+
 /// `(*void)(void *info, const void *data, size_t size)`
 type CGDataProviderReleaseDataCallback = GuestFunction;
 
@@ -248,10 +272,18 @@ fn CGDataProviderCreateWithFilename(
 ) -> CGDataProviderRef {
     let path_str = env.mem.cstr_at_utf8(filename).unwrap_or("").to_string();
     log_dbg!("CGDataProviderCreateWithFilename: {}", path_str);
-    let Ok(bytes) = env.fs.read(GuestPath::new(&path_str)) else {
+
+    // Apps sometimes build the path by concatenating an empty base directory
+    // component with a leading-slash filename (e.g. "" + "/menu.png"),
+    // producing a doubled-slash path like "//menu.png". A real filesystem
+    // collapses repeated slashes; our virtual one does not, so do it here
+    // rather than silently failing to find files that do exist.
+    let normalized = normalize_path(&path_str);
+
+    let Ok(bytes) = env.fs.read(GuestPath::new(&normalized)) else {
         log!(
-            "Warning: CGDataProviderCreateWithFilename: couldn't read {:?}",
-            path_str
+            "Warning: CGDataProviderCreateWithFilename: couldn't read {:?} (normalized: {:?})",
+            path_str, normalized
         );
         return nil; // <- was std::ptr::null()
     };
