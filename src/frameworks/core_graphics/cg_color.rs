@@ -10,7 +10,8 @@ use std::ops::{Add, Mul, Sub};
 use crate::dyld::{export_c_func, ConstantExports, FunctionExports, HostConstant};
 use crate::frameworks::core_foundation::{CFRelease, CFRetain, CFTypeRef};
 use crate::frameworks::core_graphics::cg_color_space::{
-    kCGColorSpaceGenericRGB, CGColorSpaceHostObject, CGColorSpaceRef,
+    kCGColorSpaceGenericCMYK, kCGColorSpaceGenericGray, kCGColorSpaceGenericRGB,
+    CGColorSpaceHostObject, CGColorSpaceRef,
 };
 use crate::frameworks::core_graphics::CGFloat;
 use crate::mem::{ConstPtr, MutPtr};
@@ -102,6 +103,24 @@ fn CGColorCreate(
     components: MutPtr<CGFloat>,
 ) -> CGColorRef {
     let color_space = env.objc.borrow::<CGColorSpaceHostObject>(space).name;
+    if color_space == kCGColorSpaceGenericGray {
+        // Gray colour space has 2 components: gray, alpha.
+        let gray = env.mem.read(components);
+        let a = env.mem.read(components + 1);
+        return from_rgba(env, (gray, gray, gray, a));
+    }
+    if color_space == kCGColorSpaceGenericCMYK {
+        // CMYK colour space has 5 components: c, m, y, k, alpha.
+        let c = env.mem.read(components);
+        let m = env.mem.read(components + 1);
+        let y = env.mem.read(components + 2);
+        let k = env.mem.read(components + 3);
+        let a = env.mem.read(components + 4);
+        let r = (1.0 - c) * (1.0 - k);
+        let g = (1.0 - m) * (1.0 - k);
+        let b = (1.0 - y) * (1.0 - k);
+        return from_rgba(env, (r, g, b, a));
+    }
     assert_eq!(color_space, kCGColorSpaceGenericRGB);
     let r = env.mem.read(components);
     let g = env.mem.read(components + 1);
