@@ -322,6 +322,11 @@ pub const CLASSES: ClassExports = objc_classes! {
             let item: id = msg![env; vc tabBarItem]; // Берем итем контроллера
             if item != nil {
                 let _: () = msg![env; items_array addObject:item];
+            } else {
+                log!(
+                    "Warning: [UITabBarController setViewControllers:animated:] view controller at index {} has no tabBarItem; tab bar item indices will not line up with view controller indices.",
+                    i
+                );
             }
         }
 
@@ -351,13 +356,30 @@ pub const CLASSES: ClassExports = objc_classes! {
 
     env.objc.borrow_mut::<UITabBarControllerHostObject>(this).selected_index = index;
 
-    // Синхронизируем визуальное состояние таббара
+    // Синхронизируем визуальное состояние таббара.
+    //
+    // Важно: берём item из массива, уже хранящегося в самом UITabBar
+    // (tab_bar.items), а не заново зовём [vc tabBarItem]. Если
+    // tabBarItem у контроллера не мемоизирован, повторный вызов может
+    // вернуть новый объект с тем же содержимым, но другим указателем —
+    // тогда setSelectedItem: не найдёт его в items и молча откажется
+    // (см. "Syncing error" warning). Индекс тот же самый, что мы
+    // использовали при наполнении items в setViewControllers:animated:,
+    // так что позиции гарантированно совпадают, если все view
+    // controllers имеют непустой tabBarItem.
     if tab_bar != nil {
-        let vc: id = msg![env; vcs objectAtIndex:index];
-        let item: id = msg![env; vc tabBarItem];
-        // Теперь это не вызовет варнинг, так как мы наполнили массив в
-        // setViewControllers
-        let _: () = msg![env; tab_bar setSelectedItem:item];
+        let items: id = msg![env; tab_bar items];
+        if items != nil {
+            let items_count: NSUInteger = msg![env; items count];
+            if index < items_count {
+                let item: id = msg![env; items objectAtIndex:index];
+                let _: () = msg![env; tab_bar setSelectedItem:item];
+                return;
+            }
+        }
+        // Fallback: no matching item in the bar (e.g. this VC has no
+        // tabBarItem), clear selection instead of risking a mismatch.
+        let _: () = msg![env; tab_bar setSelectedItem:nil];
     }
 }
 
