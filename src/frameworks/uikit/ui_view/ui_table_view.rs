@@ -323,6 +323,36 @@ pub const CLASSES: ClassExports = objc_classes! {
     iv
 }
 
+// MARK: Legacy iOS 2.x `text`/`image` accessors.
+//
+// Before iOS 3.0, UITableViewCell exposed `text`/`setText:` and
+// `image`/`setImage:` directly on the cell; `textLabel`/`imageView` (UILabel/
+// UIImageView based) were introduced in 3.0 and the old properties were
+// deprecated, then removed from the headers, but the symbols still get
+// called by apps built against old SDKs. We forward them to the modern
+// accessors, which is exactly what UIKit itself did during the transition
+// period.
+
+- (id)text {
+    let label: id = msg![env; this textLabel];
+    msg![env; label text]
+}
+
+- (())setText:(id)text { // NSString*
+    let label: id = msg![env; this textLabel];
+    let _: () = msg![env; label setText:text];
+}
+
+- (id)image {
+    let iv: id = msg![env; this imageView];
+    msg![env; iv image]
+}
+
+- (())setImage:(id)image { // UIImage*
+    let iv: id = msg![env; this imageView];
+    let _: () = msg![env; iv setImage:image];
+}
+
 - (())setFrame:(CGRect)frame {
     () = msg_super![env; this setFrame:frame];
     layout_cell_contents(env, this);
