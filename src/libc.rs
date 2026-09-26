@@ -27,6 +27,7 @@ pub mod errno;
 pub mod execinfo;
 pub mod fnmatch;
 mod generic_char;
+pub mod getopt;
 pub mod glob;
 pub mod globals;
 pub mod ifaddrs;
@@ -75,6 +76,7 @@ pub const DYLIB: crate::dyld::HostDylib = crate::dyld::HostDylib {
     constant_exports: &[
         ctype::CONSTANTS,
         dispatch::CONSTANTS,
+        getopt::CONSTANTS,
         globals::CONSTANTS,
         netdb::CONSTANTS,
         stdio::CONSTANTS,
@@ -99,6 +101,7 @@ pub const DYLIB: crate::dyld::HostDylib = crate::dyld::HostDylib {
         errno::FUNCTIONS,
         execinfo::FUNCTIONS,
         fnmatch::FUNCTIONS,
+        getopt::FUNCTIONS,
         glob::FUNCTIONS,
         ifaddrs::FUNCTIONS,
         keymgr::FUNCTIONS,
@@ -173,6 +176,7 @@ pub struct State {
     stdio: stdio::State,
     time: time::State,
     errno: errno::State,
+    getopt: getopt::State,
     clocale: clocale::State,
     mach_o: mach_o::State,
     mach_vm: mach::vm_map::State,
