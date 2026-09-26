@@ -335,6 +335,39 @@ fn strlcpy(
     GenericChar::<u8>::strlcpy(env, dst, src, size)
 }
 
+/// `__strlcpy_chk` — fortified variant of `strlcpy`.
+/// Per Apple/glibc's `_FORTIFY_SOURCE` convention, Clang rewrites
+/// `strlcpy(dst, src, size)` into
+/// `__strlcpy_chk(dst, src, size, dstlen)`, where `dstlen` is the
+/// compile-time-known size of the `dst` buffer (via
+/// `__builtin_object_size`). On real Darwin, if `size` exceeds
+/// `dstlen`, the real implementation traps via `__chk_fail` instead of
+/// silently overflowing `dst`. `strlcpy` itself is already
+/// overflow-safe by construction (it never writes more than `size`
+/// bytes including the NUL), so the `_chk` wrapper only adds an
+/// extra sanity check on the `size` argument itself; we honour that
+/// check (logging instead of aborting the whole emulator, matching
+/// this codebase's other `_chk` handlers) and then delegate to the
+/// normal implementation.
+fn __strlcpy_chk(
+    env: &mut Environment,
+    dst: MutPtr<u8>,
+    src: ConstPtr<u8>,
+    size: GuestUSize,
+    dst_size: GuestUSize,
+) -> GuestUSize {
+    if size > dst_size {
+        log!(
+            "Warning: __strlcpy_chk(): size {} exceeds destination buffer size {}; this indicates \
+             a real buffer overflow bug in the guest app. Real iOS would abort here; continuing \
+             with the requested strlcpy() anyway.",
+            size,
+            dst_size
+        );
+    }
+    GenericChar::<u8>::strlcpy(env, dst, src, size)
+}
+
 // Add these functions to string.rs:
 
 fn strlcat(
@@ -343,6 +376,27 @@ fn strlcat(
     src: ConstPtr<u8>,
     size: GuestUSize,
 ) -> GuestUSize {
+    GenericChar::<u8>::strlcat(env, dst, src, size)
+}
+
+/// `__strlcat_chk` — fortified variant of `strlcat`, following the same
+/// `_FORTIFY_SOURCE` convention as `__strlcpy_chk` above.
+fn __strlcat_chk(
+    env: &mut Environment,
+    dst: MutPtr<u8>,
+    src: ConstPtr<u8>,
+    size: GuestUSize,
+    dst_size: GuestUSize,
+) -> GuestUSize {
+    if size > dst_size {
+        log!(
+            "Warning: __strlcat_chk(): size {} exceeds destination buffer size {}; this indicates \
+             a real buffer overflow bug in the guest app. Real iOS would abort here; continuing \
+             with the requested strlcat() anyway.",
+            size,
+            dst_size
+        );
+    }
     GenericChar::<u8>::strlcat(env, dst, src, size)
 }
 
@@ -680,7 +734,9 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(index(_, _)),
     export_c_func!(strrchr(_, _)),
     export_c_func!(strlcpy(_, _, _)),
+    export_c_func!(__strlcpy_chk(_, _, _, _)),
     export_c_func!(strlcat(_, _, _)),
+    export_c_func!(__strlcat_chk(_, _, _, _)),
     export_c_func!(strspn(_, _)),
     export_c_func!(strpbrk(_, _)),
     export_c_func!(strndup(_, _)),
