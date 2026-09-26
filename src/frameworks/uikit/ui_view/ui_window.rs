@@ -42,6 +42,10 @@ pub struct State {
     /// is retained while the window holds it, mirroring Apple's documented
     /// strong-property semantics.
     pub root_view_controllers: HashMap<id, id>,
+    /// Per-window `windowLevel` (`CGFloat`), keyed by window pointer.
+    /// Absent entries default to `UIWindowLevelNormal` (0.0), matching
+    /// Apple's documented default for newly-created windows.
+    pub window_levels: HashMap<id, crate::frameworks::core_graphics::CGFloat>,
 }
 
 pub const CLASSES: ClassExports = objc_classes! {
@@ -487,6 +491,38 @@ pub const CLASSES: ClassExports = objc_classes! {
     );
 }
 
+// Apple's <https://developer.apple.com/documentation/uikit/uiwindow/1621621-windowlevel>:
+// "The default window level is UIWindowLevelNormal." Windows with a
+// higher level are drawn on top of windows with a lower one (real iOS
+// z-orders windows by level, then insertion order within a level).
+// touchHLE doesn't yet support multiple windows with independent
+// compositing, so we honestly store and report back whatever value the
+// app sets, but do not (yet) actually reorder window compositing based
+// on it — see composition.rs's own TODO for that follow-up. Storing and
+// echoing the value correctly still matters: several UI libraries
+// (banner/ad overlays, alert-replacement windows) read `windowLevel`
+// back to detect whether they're already "the topmost" window before
+// deciding whether to create another one.
+- (crate::frameworks::core_graphics::CGFloat)windowLevel {
+    *env
+        .framework_state
+        .uikit
+        .ui_view
+        .ui_window
+        .window_levels
+        .get(&this)
+        .unwrap_or(&UIWindowLevelNormal)
+}
+- (())setWindowLevel:(crate::frameworks::core_graphics::CGFloat)level {
+    log_dbg!("[(UIWindow*){:?} setWindowLevel:{}]", this, level);
+    env.framework_state
+        .uikit
+        .ui_view
+        .ui_window
+        .window_levels
+        .insert(this, level);
+}
+
 @end
 
 };
@@ -512,6 +548,16 @@ pub const UIKeyboardDidShowNotification: &str = "UIKeyboardDidShowNotification";
 pub const UIKeyboardWillHideNotification: &str = "UIKeyboardWillHideNotification";
 pub const UIKeyboardDidHideNotification: &str = "UIKeyboardDidHideNotification";
 pub const UIKeyboardBoundsUserInfoKey: &str = "UIKeyboardBoundsUserInfoKey";
+
+/// `UIWindowLevel` constants. Apple documents these as `CGFloat` values;
+/// see <https://developer.apple.com/documentation/uikit/uiwindowlevel>.
+pub const UIWindowLevelNormal: crate::frameworks::core_graphics::CGFloat = 0.0;
+pub const UIWindowLevelAlert: crate::frameworks::core_graphics::CGFloat = 2000.0;
+pub const UIWindowLevelStatusBar: crate::frameworks::core_graphics::CGFloat = 1000.0;
+
+const UI_WINDOW_LEVEL_NORMAL_BYTES: [u8; 4] = UIWindowLevelNormal.to_le_bytes();
+const UI_WINDOW_LEVEL_ALERT_BYTES: [u8; 4] = UIWindowLevelAlert.to_le_bytes();
+const UI_WINDOW_LEVEL_STATUS_BAR_BYTES: [u8; 4] = UIWindowLevelStatusBar.to_le_bytes();
 
 // ScreenNotifications
 pub const UIScreenDidConnectNotification: &str = "UIScreenDidConnectNotification";
@@ -550,6 +596,18 @@ pub const CONSTANTS: ConstantExports = &[
     (
         "_UIWindowDidBecomeVisibleNotification",
         HostConstant::NSString(UIWindowDidBecomeVisibleNotification),
+    ),
+    (
+        "_UIWindowLevelNormal",
+        HostConstant::Bytes(&UI_WINDOW_LEVEL_NORMAL_BYTES),
+    ),
+    (
+        "_UIWindowLevelAlert",
+        HostConstant::Bytes(&UI_WINDOW_LEVEL_ALERT_BYTES),
+    ),
+    (
+        "_UIWindowLevelStatusBar",
+        HostConstant::Bytes(&UI_WINDOW_LEVEL_STATUS_BAR_BYTES),
     ),
     // _UIKeyboardWillShowNotification, _UIKeyboardDidShowNotification,
     // _UIKeyboardWillHideNotification, _UIKeyboardDidHideNotification and
