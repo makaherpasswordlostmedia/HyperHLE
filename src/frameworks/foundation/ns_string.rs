@@ -1463,6 +1463,47 @@ pub const CLASSES: ClassExports = objc_classes! {
     ui_font::draw_in_rect(env, font, &text, rect, line_break_mode, align)
 }
 
+// iOS 7+ attributed-string drawing API (`NSStringDrawing`). These are thin
+// wrappers around the UIFont-based paths above: only NSFontAttributeName is
+// honoured, other attributes (colour, paragraph style, ...) are ignored.
+
+- (CGSize)sizeWithAttributes:(id)attributes {
+    let font = font_from_attributes(env, attributes);
+    msg![env; this sizeWithFont:font]
+}
+
+- (())drawAtPoint:(CGPoint)point withAttributes:(id)attributes {
+    let font = font_from_attributes(env, attributes);
+    let text = to_rust_string(env, this);
+    let _ = ui_font::draw_at_point(env, font, &text, point, None);
+}
+
+- (())drawInRect:(CGRect)rect withAttributes:(id)attributes {
+    let font = font_from_attributes(env, attributes);
+    let text = to_rust_string(env, this);
+    let _ = ui_font::draw_in_rect(
+        env,
+        font,
+        &text,
+        rect,
+        UILineBreakModeWordWrap,
+        UITextAlignmentLeft,
+    );
+}
+
+- (CGRect)boundingRectWithSize:(CGSize)size
+                       options:(NSInteger)_options
+                    attributes:(id)attributes
+                       context:(id)_context {
+    let font = font_from_attributes(env, attributes);
+    let text = to_rust_string(env, this);
+    let sz = ui_font::size_with_font(env, font, &text, Some((size, UILineBreakModeWordWrap)));
+    CGRect {
+        origin: CGPoint { x: 0.0, y: 0.0 },
+        size: sz,
+    }
+}
+
 - (bool)writeToFile:(id)path atomically:(bool)use_aux_file {
     let encoding: NSStringEncoding = msg_class![env; NSString defaultCStringEncoding];
     let error: MutPtr<id> = Ptr::null();
@@ -2959,6 +3000,20 @@ fn string_by_replacing_occurrences_inner(
     let result_ns_string = msg_class![env; _touchHLE_NSString alloc];
     *env.objc.borrow_mut(result_ns_string) = StringHostObject::Utf16(result);
     autorelease(env, result_ns_string)
+}
+
+/// Extract the UIFont from an attributes dictionary (`NSFontAttributeName`,
+/// whose value is the string "NSFont"). Falls back to the 12pt system font,
+/// which is the default on iOS 7+.
+fn font_from_attributes(env: &mut Environment, attributes: id) -> id {
+    if attributes != nil {
+        let key = get_static_str(env, "NSFont");
+        let font: id = msg![env; attributes objectForKey:key];
+        if font != nil {
+            return font;
+        }
+    }
+    msg_class![env; UIFont systemFontOfSize:(12.0 as CGFloat)]
 }
 
 fn size_with_font_min_font_size_actual_font_size_for_width_line_break_mode(
