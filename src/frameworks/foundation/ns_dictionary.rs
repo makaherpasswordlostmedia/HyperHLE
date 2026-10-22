@@ -290,14 +290,24 @@ pub fn init_with_objects_and_keys(
     first_object: id,
     mut va_args: VaList,
 ) -> id {
-    let first_key: id = va_args.next(env);
-    // Spec: `dictionaryWithObjectsAndKeys:` should @throw if the first key is
-    // nil. We log + return an empty dictionary instead of panicking the host.
     let mut host_object = <DictionaryHostObject as Default>::default();
+    // The argument list is `obj, key, obj, key, ..., nil`: a nil *object* is
+    // the terminator. `[NSDictionary dictionaryWithObjectsAndKeys:nil]` is
+    // therefore a valid way to make an empty dictionary. We must not read a
+    // key from the va_list in that case, since there is none (it would be
+    // garbage from registers/stack).
+    if first_object == nil {
+        *env.objc.borrow_mut(this) = host_object;
+        return this;
+    }
+    let first_key: id = va_args.next(env);
+    // Spec: a nil first key with a non-nil object should @throw. We log and
+    // return an empty dictionary instead of panicking the host.
     if first_key == nil {
         log!(
-            "Warning: dictionaryWithObjectsAndKeys:/initWithObjectsAndKeys: first key is nil; \
-             returning empty dictionary."
+            "Warning: dictionaryWithObjectsAndKeys:/initWithObjectsAndKeys: first key is nil \
+             (object {:?}); returning empty dictionary.",
+            first_object
         );
         *env.objc.borrow_mut(this) = host_object;
         return this;
