@@ -22,42 +22,42 @@ concurrency:
 
 jobs:
   build-osx:
-    runs-on: macos-latest  
+    runs-on: macos-latest
 
-    steps:  
+    steps:
       - name: Checkout touchHLE
         uses: actions/checkout@main
         with:
           submodules: recursive
-          
+
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@master
 
-      - name: Try to get cached copy of Boost  
-        id: cache-boost  
+      - name: Try to get cached copy of Boost
+        id: cache-boost
         uses: actions/cache@main
-        with:  
-          path: vendor/boost  
-          key: boost_1_81_0_macos  
-          
-      - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}  
-        name: Download Boost  
-        run: curl -L -O "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.tar.gz"  
-        
-      - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}  
-        name: Extract Boost  
-        run: mkdir -p vendor && tar xzf boost_1_81_0.tar.gz -C vendor && mv vendor/boost_1_81_0 vendor/boost  
+        with:
+          path: vendor/boost
+          key: boost_1_81_0_macos
+
+      - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+        name: Download Boost
+        run: curl -L -O "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.tar.gz"
+
+      - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+        name: Extract Boost
+        run: mkdir -p vendor && tar xzf boost_1_81_0.tar.gz -C vendor && mv vendor/boost_1_81_0 vendor/boost
 
       - name: Setup CMake
         uses: lukka/get-cmake@latest
         with:
           cmakeVersion: "~3.29.0"
 
-      - name: Install x86_64 toolchain  
-        run: rustup target add x86_64-apple-darwin  
-        
-      - name: Build  
-        run: cargo build --target x86_64-apple-darwin --release  
+      - name: Install x86_64 toolchain
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Build
+        run: cargo build --target x86_64-apple-darwin --release
 
       - name: Create .app bundle and DMG
         # `hdiutil create` periodically fails on the `macos-15-arm64` GitHub
@@ -103,7 +103,7 @@ jobs:
             attempt=$((attempt + 1))
           done
           mv touchHLE.dmg ..
-          
+
       - uses: actions/upload-artifact@main
         with:
           name: touchHLE_macOS_x86_64
@@ -180,13 +180,21 @@ jobs:
           path: touchHLE_linux_bundle/
 
   build-android:
-    runs-on: ubuntu-latest  
+    runs-on: ubuntu-latest
 
-    steps:  
+    steps:
     - name: Checkout touchHLE
       uses: actions/checkout@main
       with:
         submodules: recursive
+
+    # Gradle 8.11.1 cannot run on the newest default JDK of the runner
+    # ("Unsupported class file major version 69" = Java 25), so pin Java 17.
+    - name: Set up Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
 
     - name: Cache Rust build artifacts
       uses: actions/cache@main
@@ -198,132 +206,132 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-cargo-
-          
-    - name: Try to get cached copy of Boost  
-      id: cache-boost  
+
+    - name: Try to get cached copy of Boost
+      id: cache-boost
       uses: actions/cache@main
-      with:  
-        path: vendor/boost  
-        key: boost_1_81_0  
+      with:
+        path: vendor/boost
+        key: boost_1_81_0
 
-    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}  
-      name: Download Boost  
-      run: curl -L -o boost_1_81_0.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"  
+    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+      name: Download Boost
+      run: curl -L -o boost_1_81_0.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"
 
-    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}  
-      name: Extract Boost  
-      run: 7z -ovendor x boost_1_81_0.7z && mv vendor/boost_1_81_0 vendor/boost  
+    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+      name: Extract Boost
+      run: 7z -ovendor x boost_1_81_0.7z && mv vendor/boost_1_81_0 vendor/boost
 
-    - name: Try to get cached copy of cmake  
-      id: cache-cmake  
+    - name: Try to get cached copy of cmake
+      id: cache-cmake
       uses: actions/cache@main
-      with:  
-        path: vendor/cmake  
-        key: cmake_3_31_6_linux  
+      with:
+        path: vendor/cmake
+        key: cmake_3_31_6_linux
 
-    - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}  
-      name: Download Cmake  
-      run: curl -L -O "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz"  
+    - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
+      name: Download Cmake
+      run: curl -L -O "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz"
 
-    - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}  
-      name: Extract Cmake  
-      run: tar xzvf "cmake-3.31.6-linux-x86_64.tar.gz" -C vendor && mv vendor/cmake-3.31.6-linux-x86_64 vendor/cmake  
+    - if: ${{ steps.cache-cmake.outputs.cache-hit != 'true' }}
+      name: Extract Cmake
+      run: tar xzvf "cmake-3.31.6-linux-x86_64.tar.gz" -C vendor && mv vendor/cmake-3.31.6-linux-x86_64 vendor/cmake
 
-    - name: Install AArch64 Android Rust toolchain  
-      run: rustup target add aarch64-linux-android  
+    - name: Install AArch64 Android Rust toolchain
+      run: rustup target add aarch64-linux-android
 
-    - name: Install cargo-ndk  
-      run: cargo install cargo-ndk@3.5.4  
+    - name: Install cargo-ndk
+      run: cargo install cargo-ndk@3.5.4
 
-    - name: Try to get a cached copy of Gradle  
-      id: cache-gradle  
+    - name: Try to get a cached copy of Gradle
+      id: cache-gradle
       uses: actions/cache@main
-      with:  
-        path: gradle  
-        key: gradle-8.11.1  
+      with:
+        path: gradle
+        key: gradle-8.11.1
 
-    - if: ${{ steps.cache-gradle.outputs.cache-hit != 'true' }}  
-      name: Download Gradle  
-      run: curl -L -o gradle-8.11.1-bin.zip "https://services.gradle.org/distributions/gradle-8.11.1-bin.zip"  
+    - if: ${{ steps.cache-gradle.outputs.cache-hit != 'true' }}
+      name: Download Gradle
+      run: curl -L -o gradle-8.11.1-bin.zip "https://services.gradle.org/distributions/gradle-8.11.1-bin.zip"
 
-    - if: ${{ steps.cache-gradle.outputs.cache-hit != 'true' }}  
-      name: Extract Gradle  
-      run: 7z -ogradle x gradle-8.11.1-bin.zip  
+    - if: ${{ steps.cache-gradle.outputs.cache-hit != 'true' }}
+      name: Extract Gradle
+      run: 7z -ogradle x gradle-8.11.1-bin.zip
 
-    - name: Try to get a cached copy of Android NDK  
-      id: cache-android-ndk  
+    - name: Try to get a cached copy of Android NDK
+      id: cache-android-ndk
       uses: actions/cache@main
-      with:  
-        path: android-ndk  
-        key: android-ndk-r25c  
+      with:
+        path: android-ndk
+        key: android-ndk-r25c
 
-    - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}  
-      name: Download Android NDK  
-      run: curl -L -o android-ndk-r25c-linux.zip "https://dl.google.com/android/repository/android-ndk-r25c-linux.zip"  
+    - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}
+      name: Download Android NDK
+      run: curl -L -o android-ndk-r25c-linux.zip "https://dl.google.com/android/repository/android-ndk-r25c-linux.zip"
 
-    - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}  
-      name: Extract Android NDK  
-      run: 7z -oandroid-ndk -snld x android-ndk-r25c-linux.zip  
+    - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}
+      name: Extract Android NDK
+      run: 7z -oandroid-ndk -snld x android-ndk-r25c-linux.zip
 
-    - name: Link Android NDK  
-      run: ln -s $PWD'/android-ndk/android-ndk-r25c' $ANDROID_SDK_ROOT'/ndk/25.2.9519653'  
+    - name: Link Android NDK
+      run: ln -s $PWD'/android-ndk/android-ndk-r25c' $ANDROID_SDK_ROOT'/ndk/25.2.9519653'
 
-    - name: Generate local.properties file  
-      run: echo 'sdk.dir='$ANDROID_SDK_ROOT > android/local.properties  
+    - name: Generate local.properties file
+      run: echo 'sdk.dir='$ANDROID_SDK_ROOT > android/local.properties
 
-    - name: Build for Android  
-      run: cd android && ../gradle/gradle-8.11.1/bin/gradle assembleRelease && mv app/build/outputs/apk/release/app-release.apk ../touchHLE.apk  
-      env:  
-        ANDROID_NDK_ROOT: '/usr/local/lib/android/sdk/ndk/25.2.9519653'  
-        CMAKE: ${{ github.workspace }}/vendor/cmake/bin/cmake  
+    - name: Build for Android
+      run: cd android && ../gradle/gradle-8.11.1/bin/gradle assembleRelease && mv app/build/outputs/apk/release/app-release.apk ../touchHLE.apk
+      env:
+        ANDROID_NDK_ROOT: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
+        CMAKE: ${{ github.workspace }}/vendor/cmake/bin/cmake
 
     - uses: actions/upload-artifact@main
-      with:  
-        name: touchHLE_Android_AArch64  
+      with:
+        name: touchHLE_Android_AArch64
         path: touchHLE.apk
 
   build-win:
-    runs-on: windows-2022  
+    runs-on: windows-2022
 
-    steps:  
+    steps:
     - name: Checkout touchHLE
       uses: actions/checkout@main
       with:
         submodules: recursive
-        
+
     - name: Cache Rust build artifacts
       uses: Swatinem/rust-cache@master
 
-    - name: Try to get cached copy of Boost  
-      id: cache-boost  
+    - name: Try to get cached copy of Boost
+      id: cache-boost
       uses: actions/cache@main
-      with:  
-        path: vendor\boost  
-        key: boost_1_81_0  
-        
-    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}  
-      name: Download Boost  
-      run: curl -L -o boost_1_81_0.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"  
-      
-    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}  
-      name: Extract Boost  
-      run: 7z -ovendor x boost_1_81_0.7z && ren vendor\boost_1_81_0 boost  
+      with:
+        path: vendor\boost
+        key: boost_1_81_0
+
+    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+      name: Download Boost
+      run: curl -L -o boost_1_81_0.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"
+
+    - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
+      name: Extract Boost
+      run: 7z -ovendor x boost_1_81_0.7z && ren vendor\boost_1_81_0 boost
 
     - name: Setup CMake
       uses: lukka/get-cmake@latest
       with:
         cmakeVersion: "~3.29.0"
 
-    - name: Build  
-      run: cargo build --release  
+    - name: Build
+      run: cargo build --release
 
-    - name: Create bundle  
-      shell: bash  
-      run: cd dev-scripts && ./make-windows-bundle.sh ../target/release/touchHLE.exe && mv touchHLE_windows_bundle/ ..  
-      
+    - name: Create bundle
+      shell: bash
+      run: cd dev-scripts && ./make-windows-bundle.sh ../target/release/touchHLE.exe && mv touchHLE_windows_bundle/ ..
+
     - uses: actions/upload-artifact@main
-      with:  
-        name: touchHLE_Windows_x86_64  
+      with:
+        name: touchHLE_Windows_x86_64
         path: touchHLE_windows_bundle/
 
   check-hyperhle-release:
