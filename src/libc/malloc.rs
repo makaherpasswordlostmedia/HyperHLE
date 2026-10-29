@@ -138,6 +138,39 @@ fn malloc_zone_size(
     env.mem.malloc_size(ptr)
 }
 
+#[repr(C, packed)]
+#[allow(non_camel_case_types)]
+pub struct malloc_statistics_t {
+    blocks_in_use: u32,
+    size_in_use: GuestUSize,
+    max_size_in_use: GuestUSize,
+    size_allocated: GuestUSize,
+}
+unsafe impl SafeRead for malloc_statistics_t {}
+
+/// Fills `*stats` for `zone` (null = all zones). Every zone is backed by the
+/// one global guest heap and the allocator exposes no usage counters, so the
+/// struct is written as all zeros ("nothing tracked") instead of being left
+/// uninitialised, which is what the generic return-0 stub did.
+fn malloc_zone_statistics(
+    env: &mut Environment,
+    _zone: MutPtr<malloc_zone_t>,
+    stats: MutPtr<malloc_statistics_t>,
+) {
+    if stats.is_null() {
+        return;
+    }
+    env.mem.write(
+        stats,
+        malloc_statistics_t {
+            blocks_in_use: 0,
+            size_in_use: 0,
+            max_size_in_use: 0,
+            size_allocated: 0,
+        },
+    );
+}
+
 /// Not a part of the API. However as such a function needs to be accessible in
 /// the zone struct, it has to be exported.
 fn malloc_set_zone_name(env: &mut Environment, zone: MutPtr<malloc_zone_t>, name: ConstPtr<u8>) {
@@ -155,5 +188,6 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(malloc_zone_malloc(_, _)),
     export_c_func!(malloc_zone_realloc(_, _, _)),
     export_c_func!(malloc_zone_size(_, _)),
+    export_c_func!(malloc_zone_statistics(_, _)),
     export_c_func!(malloc_set_zone_name(_, _)),
 ];
