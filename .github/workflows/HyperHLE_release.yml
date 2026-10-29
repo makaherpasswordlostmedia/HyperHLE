@@ -263,7 +263,7 @@ jobs:
 
     - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}  
       name: Extract Android NDK  
-      run: 7z -oandroid-ndk -snld x android-ndk-r25c-linux.zip  
+      run: unzip -q android-ndk-r25c-linux.zip -d android-ndk
 
     - name: Link Android NDK  
       run: ln -s $PWD'/android-ndk/android-ndk-r25c' $ANDROID_SDK_ROOT'/ndk/25.2.9519653'  
