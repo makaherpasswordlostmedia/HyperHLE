@@ -1970,6 +1970,19 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg![env; this initWithBytes:(characters.cast::<u8>()) length:num_bytes encoding:NSUTF16StringEncoding]
 }
 
+// We always copy the characters, so "NoCopy" is just a semantic difference.
+// freeWhenDone is intentionally ignored: leaking is harmless, a bogus free()
+// of a buffer that wasn't malloc'd by the guest could crash.
+- (id)initWithCharactersNoCopy:(MutPtr<unichar>)characters
+                        length:(NSUInteger)len
+                  freeWhenDone:(bool)_free {
+    if characters.is_null() {
+        release(env, this);
+        return nil;
+    }
+    msg![env; this initWithCharacters:(characters.cast_const()) length:len]
+}
+
 - (id)initWithString:(id)string {
     let mut code_units = Vec::new();
     for_each_code_unit(env, string, |_, c| code_units.push(c));
@@ -2399,6 +2412,25 @@ pub const CLASSES: ClassExports = objc_classes! {
         println!("Warning: _touchHLE_NSMutableString initWithCoder: unsupported coder class, returning empty string");
     }
     this
+}
+
+- (id)initWithCharacters:(ConstPtr<unichar>)characters length:(NSUInteger)len {
+    assert!(!characters.is_null());
+    let num_bytes = len * 2;
+    msg![env; this initWithBytes:(characters.cast::<u8>()) length:num_bytes encoding:NSUTF16StringEncoding]
+}
+
+// We always copy the characters, so "NoCopy" is just a semantic difference.
+// freeWhenDone is intentionally ignored: leaking is harmless, a bogus free()
+// of a buffer that wasn't malloc'd by the guest could crash.
+- (id)initWithCharactersNoCopy:(MutPtr<unichar>)characters
+                        length:(NSUInteger)len
+                  freeWhenDone:(bool)_free {
+    if characters.is_null() {
+        release(env, this);
+        return nil;
+    }
+    msg![env; this initWithCharacters:(characters.cast_const()) length:len]
 }
 
 - (id)initWithBytes:(ConstPtr<u8>)bytes length:(NSUInteger)len encoding:(NSStringEncoding)encoding {
