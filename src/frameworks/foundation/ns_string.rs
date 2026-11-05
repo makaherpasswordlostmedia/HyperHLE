@@ -1545,6 +1545,24 @@ pub const CLASSES: ClassExports = objc_classes! {
     (sign * magnitude).clamp(i32::MIN as i64, i32::MAX as i64) as i32
 }
 
+- (i64)longLongValue {
+    let st = to_rust_string(env, this);
+    let st = st.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let (negative, rest) = match st.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, st.strip_prefix('+').unwrap_or(st)),
+    };
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    // Saturate on overflow like the real implementation (LLONG_MAX/LLONG_MIN)
+    let magnitude: i128 = if digits.is_empty() {
+        0
+    } else {
+        digits.parse().unwrap_or(i128::MAX)
+    };
+    let signed = if negative { -magnitude } else { magnitude };
+    signed.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+}
+
 - (id)lowercaseString {
     let str = to_rust_string(env, this).to_lowercase();
     let res = from_rust_string(env, str);
