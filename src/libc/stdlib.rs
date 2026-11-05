@@ -119,9 +119,11 @@ fn malloc(env: &mut Environment, mut size: GuestUSize) -> MutVoidPtr {
     // sometimes compute nonsensical allocation sizes due to NULL pointer
     // arithmetic when upstream issues cause initialization failures).
     if size > 0x2000_0000 {
+        let pc = env.cpu.regs()[crate::cpu::Cpu::PC];
+        let lr = env.cpu.regs()[crate::cpu::Cpu::LR];
         log!(
-            "TouchHLE::libc::stdlib: malloc({:#x}) refused as out of range — returning NULL",
-            size
+            "TouchHLE::libc::stdlib: malloc({:#x}) refused as out of range — returning NULL (caller PC={:#x} LR={:#x})",
+            size, pc, lr
         );
         set_errno(env, crate::libc::errno::ENOMEM);
         return MutVoidPtr::null();
@@ -140,12 +142,34 @@ fn malloc_size(env: &mut Environment, ptr: ConstVoidPtr) -> GuestUSize {
 
 fn calloc(env: &mut Environment, count: GuestUSize, size: GuestUSize) -> MutVoidPtr {
     set_errno(env, 0);
-    let mut total = size.checked_mul(count).unwrap();
+    let mut total = match size.checked_mul(count) {
+        Some(t) => t,
+        None => {
+            log!("TouchHLE::libc::stdlib: calloc({}, {}) overflowed — returning NULL", count, size);
+            set_errno(env, crate::libc::errno::ENOMEM);
+            return MutVoidPtr::null();
+        }
+    };
+    // Same negative-size hack as malloc()
+    if total > 0xF000_0000 {
+        let actual = (-(total as i32)) as GuestUSize;
+        log!("TouchHLE::libc::stdlib: Hack! calloc total {:#x} looks negative. Using {} bytes.", total, actual);
+        total = actual;
+    }
     if total == 0 {
         total = 1;
-        // Защита от падения
     }
-    env.mem.calloc(total)
+    if total > 0x2000_0000 {
+        let lr = env.cpu.regs()[crate::cpu::Cpu::LR];
+        log!("TouchHLE::libc::stdlib: calloc({:#x}) refused — returning NULL (LR={:#x})", total, lr);
+        set_errno(env, crate::libc::errno::ENOMEM);
+        return MutVoidPtr::null();
+    }
+    let ptr = env.mem.calloc(total);
+    if ptr.is_null() {
+        set_errno(env, crate::libc::errno::ENOMEM);
+    }
+    ptr
 }
 
 fn NSZoneMalloc(env: &mut Environment, _zone: id, mut size: GuestUSize) -> MutVoidPtr {
@@ -1142,6 +1166,7 @@ fn __assert_rtn(
         file_str,
         line
     );
+    env.stack_trace_current();
 }
 
 fn __assert(env: &mut Environment, expr: ConstPtr<u8>, file: ConstPtr<u8>, line: i32) {
@@ -1153,6 +1178,7 @@ fn __assert(env: &mut Environment, expr: ConstPtr<u8>, file: ConstPtr<u8>, line:
         file_str,
         line
     );
+    env.stack_trace_current();
 }
 
 fn __assert_fail(
@@ -1172,6 +1198,7 @@ fn __assert_fail(
         file_str,
         line
     );
+    env.stack_trace_current();
 }
 
 fn read_cstr_safe(env: &mut Environment, ptr: ConstPtr<u8>) -> String {
@@ -2114,7 +2141,6 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(_Unwind_SjLj_RaiseException(_)),
     export_c_func!(_Unwind_SjLj_Resume(_)),
     export_c_func!(_Unwind_SjLj_Resume_or_Rethrow(_)),
-    export_c_func!(abort()),
     export_c_func!(__stack_chk_fail()),
     export_c_func!(CFUUIDCreate(_)),
     export_c_func!(CFUUIDCreateString(_, _)),
