@@ -501,6 +501,7 @@ fn getdtablesize(_env: &mut Environment) -> i32 {
 
 fn sysconf(_env: &mut Environment, name: SysConfName) -> i32 {
     match name {
+        _SC_CLK_TCK => 100, // ImplSysconfClock
         _SC_PAGESIZE => PAGE_SIZE.try_into().unwrap(),
         _SC_NPROCESSORS_CONF | _SC_NPROCESSORS_ONLN => 1,
         _SC_PHYS_PAGES => 131072, // ~512 MiB / 4 KiB pages
