@@ -1696,22 +1696,27 @@ where
                 // so the destination buffer (sized for max_width+1) is
                 // not overrun. Used by LEGO Ninjago: Spinjitzu Scavenger
                 // Hunt's text loader (e.g. `sscanf(line, "%15[^=]=%s", …)`).
-                assert_ne!(env.mem.read(format + format_char_idx), b']');
                 let mut c: u8;
                 let inverted = if env.mem.read(format + format_char_idx) == b'^' {
                     format_char_idx += 1;
-                    assert_ne!(env.mem.read(format + format_char_idx), b']');
                     true
                 } else {
                     false
                 };
                 // Build set
                 let mut set: HashSet<u8> = HashSet::new();
+                // Per C: a ']' right after '[' or '[^' is a literal member of
+                // the set, not the terminator (e.g. "%[^]]" or "%[]abc]").
+                if env.mem.read(format + format_char_idx) == b']' {
+                    set.insert(b']');
+                    format_char_idx += 1;
+                }
                 c = env.mem.read(format + format_char_idx);
                 format_char_idx += 1;
-                while c != b']' {
-                    if env.mem.read(format + format_char_idx) == b'-' {
-                        assert_ne!(env.mem.read(format + format_char_idx + 1), b']');
+                while c != b']' && c != b'\0' {
+                    if env.mem.read(format + format_char_idx) == b'-'
+                        && !matches!(env.mem.read(format + format_char_idx + 1), b']' | b'\0')
+                    {
                         let cc = env.mem.read(format + format_char_idx + 1);
                         for x in c..=cc {
                             set.insert(x);
